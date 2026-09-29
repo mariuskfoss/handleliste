@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.3 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Ukeshandel v0.4.3b — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -15,7 +15,14 @@
   var UNITS = ['stk', 'g', 'kg', 'ml', 'dl', 'l', 'ss', 'ts', 'pk', 'boks', 'glass', 'beger', 'flaske', 'fedd', 'bunt'];
   var DAY_NAMES = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
   var DAY_SHORT = ['man', 'tir', 'ons', 'tor', 'fre', 'lør', 'søn'];
-  var FILTERS = [['alle', 'Alle'], ['middag', 'Middag'], ['faste', 'Faste varer']];
+  // v0.4.3b: filtervelgeren (Alle / Middag / Faste varer) er fjernet og erstattet av sorteringsvelgeren.
+  var SORTS = [['butikk', 'Butikk', 'Sorter etter avdeling i butikken'], ['kilde', 'Kilde', 'Sorter etter rett']];
+  var SORT_KEY = 'ukeshandel:sort';               // 'butikk' | 'kilde' – huskes per telefon, synkes ikke
+  var FAST_PREFIX = 'fast:';                      // v0.4.3b: adjust["fast:<fast vare-id>"] = 1 på lista / -1 ikke
+  // v0.4.3b: faste varer er med bare når de er valgt for uka. Uker FØR denne datoen (til og med uke 40 2026, uka
+  // v0.4.3b ble tatt i bruk) beholder den gamle oppførselen til noen velger: alle aktive faste varer er med, så ingenting
+  // forsvinner midt i en handletur. Fra uke 41 er ingen faste varer med før de velges.
+  var STAPLES_OPTIN_FROM = '2026-10-05';
   var SUNDAY_EVENING_HOUR = 17;  // fra søndag kl. 17 regnes inneværende uke som «over for i dag»
   var UNDO_MS = 8000;             // hvor lenge «Angre» vises etter «Fjern avkrysning»
   // I Firestore lagres avkrysning som checked[vare] = true (som før, så eldre versjoner forstår den),
@@ -28,7 +35,7 @@
   var state = null;
   var memoryOnly = false;
   var hadLocalData = false;
-  var ui = { weekOffset: 0, weekTouched: false, staplesOpen: false, addOpen: false, filter: 'alle', notice: '', justCreated: false, busy: false, error: '' };
+  var ui = { weekOffset: 0, weekTouched: false, staplesOpen: false, addOpen: false, sort: lsGet(SORT_KEY) === 'kilde' ? 'kilde' : 'butikk', notice: '', justCreated: false, busy: false, error: '' };
   var Sync = window.UkeshandelSync || null;
   var hh = null;             // husstandsinfo når vi er i husstandsmodus
   var syncReady = null;      // promise: SDK lastet, innlogget, medlemskap sjekket
@@ -667,6 +674,13 @@
       save();
       remote(function (W, hid) { return W.setAdjust(hid, week, r); });
     },
+    // v0.4.3b: faste varer valgt for uka, feltvis i samme adjust-kart («fast:<id>» = 1 på lista / -1 ikke).
+    setFast: function (week, map) {
+      var m = state.list_adjust[week] = state.list_adjust[week] || {}, r = {};
+      Object.keys(map).forEach(function (id) { m[FAST_PREFIX + id] = map[id]; r[FAST_PREFIX + id] = map[id]; });
+      save();
+      remote(function (W, hid) { return W.setAdjust(hid, week, r); });
+    },
     clearAdjust: function (week, key) {
       if (state.list_adjust[week]) delete state.list_adjust[week][key];
       save();
@@ -1150,7 +1164,7 @@
     // v0.4.1: samme vare i omregnbare enheter (dl/l/ml/ss/ts, g/kg, + pakningstabellen) blir én linje.
     function add(src, from, name, qty, unit, aisle, extraId) {
       var nn = normName(name);
-      if (!nn) return;
+      if (!nn) return null;
       unit = U.normUnit(unit);             // v0.4.2: «L», " dl", «liter» … → l/dl
       // v0.4.2: en kjent pakningsvare uten enhet og uten mengde (f.eks. fast vare der mengden er tømt) = én pakning.
       if ((qty == null || qty === '') && /^(|pk|stk|kartong|beger)$/.test(unit) && U.packFor(nn) && U.conversion(nn, unit)) qty = 1;
@@ -1169,6 +1183,21 @@
       if (RANK[src] < RANK[it.source]) it.source = src;
       if (from && it.recipes.indexOf(from) < 0) it.recipes.push(from);
       if (extraId) it.extra_ids.push(extraId);
+      return key;
+    }
+    // v0.4.3b: «Kilde»-visningen: én gruppe per middag (dagens rekkefølge) + «Lagt til selv». Hver rad har rettens
+    // EGEN mengde (ingen pakningsavrunding) og peker på den sammenslåtte linja (key), så avkrysningen er felles.
+    var srcGroups = [], selv = { id: 'selv', title: 'Lagt til selv', rows: [], rmap: {}, skipped: 0 };
+    function srcRow(g, kind, key, name, qty, unit, extraId) {
+      if (!key) return;
+      var rk = kind + '/' + key, r = g.rmap[rk];
+      if (!r) { r = g.rmap[rk] = { row: g.id + '/' + rk, kind: kind, key: key, name: String(name).trim(), parts: {}, units: [], extra_ids: [] }; g.rows.push(r); }
+      var u = U.normUnit(unit);
+      if (qty != null && qty !== '' && isFinite(qty)) {
+        if (r.units.indexOf(u) < 0) r.units.push(u);
+        r.parts[u] = round3((r.parts[u] || 0) + Number(qty));
+      }
+      if (extraId) r.extra_ids.push(extraId);
     }
     var dinners = 0;
     // v0.4.3: basisvarer. Et navn er basisvare denne uka når ALLE middagsforekomstene er basis (tabell eller merket i
@@ -1180,10 +1209,12 @@
       var r = o || (state.week_plan[d] ? recipeById(state.week_plan[d]) : null);
       if (!r) return;
       dinners++;
+      var g = { id: d, date: d, title: dayName(d) + ' · ' + r.name, rows: [], rmap: {}, skipped: 0 };
+      srcGroups.push(g);
       r.ingredients.forEach(function (i) {
         var nn = normName(i.name);
         if (!nn) return;
-        dinnerIngs.push({ r: r, i: i, nn: nn });
+        dinnerIngs.push({ r: r, i: i, nn: nn, g: g });
         var c = occ[nn] = occ[nn] || { n: 0, b: 0 };
         c.n++; if (U.isBasis(i)) c.b++;
       });
@@ -1196,19 +1227,24 @@
         if (!b) b = basisMap[x.nn] = { nn: x.nn, name: String(x.i.name).trim(), recipes: [], entries: [], choice: adjW[BASIS_PREFIX + x.nn] || 0 };
         if (b.recipes.indexOf(x.r.name) < 0) b.recipes.push(x.r.name);
         b.entries.push({ qty: x.i.qty, unit: x.i.unit });
-        if (b.choice !== 1) return;          // ikke valgt (eller «ikke nå») → ikke på lista
+        if (b.choice !== 1) { x.g.skipped++; return; }   // ikke valgt (eller «ikke nå») → ikke på lista
         basisAdded[x.nn] = true;
       }
-      add('dinner', x.r.name, x.i.name, x.i.qty, x.i.unit, x.i.aisle);
+      srcRow(x.g, 'dinner', add('dinner', x.r.name, x.i.name, x.i.qty, x.i.unit, x.i.aisle), x.i.name, x.i.qty, x.i.unit);
     });
     var basis = Object.keys(basisMap).map(function (nn) { var b = basisMap[nn]; b.amount = basisAmount(nn, b.entries); return b; })
       .sort(function (a, b) { return a.name.localeCompare(b.name, 'nb'); });
-    state.staples.forEach(function (s) {
-      if (s.active === false) return;
-      add('staple', null, s.name, s.qty, s.unit, s.aisle);
+    // v0.4.3b: faste varer bare når de er valgt for uka (se STAPLES_OPTIN_FROM for eldre uker).
+    var staples = state.staples.map(function (s) {
+      var v = adjW[FAST_PREFIX + s.id];
+      return { s: s, on: stapleChosen(s, weekKey, adjW), explicit: v > 0 ? 1 : v < 0 ? -1 : 0 };
+    });
+    staples.forEach(function (x) {
+      if (!x.on) return;
+      srcRow(selv, 'staple', add('staple', null, x.s.name, x.s.qty, x.s.unit, x.s.aisle), x.s.name, x.s.qty, x.s.unit);
     });
     state.list_extras.forEach(function (x) {
-      if (x.week === weekKey) add('extra', null, x.name, x.qty, x.unit, x.aisle, x.id);
+      if (x.week === weekKey) srcRow(selv, 'extra', add('extra', null, x.name, x.qty, x.unit, x.aisle, x.id), x.name, x.qty, x.unit, x.id);
     });
     var adj = state.list_adjust[weekKey] || {};
     var checks = state.checks[weekKey] || {};
@@ -1259,7 +1295,24 @@
       save();
     }
     currentList = items;
-    return { items: items, dates: dates, dinners: dinners, weekKey: weekKey, basis: basis };
+    var byKey = {}, rowCount = {};
+    items.forEach(function (it) { byKey[it.key] = it; });
+    srcGroups.concat([selv]).forEach(function (g) { g.rows.forEach(function (r) { rowCount[r.key] = (rowCount[r.key] || 0) + 1; }); });
+    srcGroups.concat([selv]).forEach(function (g) {
+      g.rows.forEach(function (r) {
+        r.shared = rowCount[r.key] > 1;
+        r.item = byKey[r.key];
+        r.amount = r.units.map(function (u) { return formatQty(r.parts[u]) + (u ? ' ' + u : ''); }).join(' + ');
+      });
+    });
+    return { items: items, dates: dates, dinners: dinners, weekKey: weekKey, basis: basis,
+      source: srcGroups, selv: selv, staples: staples, legacyStaples: weekKey < STAPLES_OPTIN_FROM };
+  }
+  function stapleChosen(s, weekKey, adjW) {
+    var v = adjW[FAST_PREFIX + s.id];
+    if (v > 0) return true;
+    if (v < 0) return false;
+    return weekKey < STAPLES_OPTIN_FROM && s.active !== false;
   }
   var currentList = [];
   // Samlet middagsmengde for en basisvare (til visning i vinduet), f.eks. «1 ss + 2 ts» eller «1 dl».
@@ -1351,6 +1404,81 @@
     var firstCb = d.querySelector('.basis-rows input');
     if (firstCb) firstCb.focus();
   }
+  // v0.4.3b: «Legg til fra faste varer» – alle faste husvarer med avkrysning for valgt uke.
+  function trapTab(d, e) {
+    var f = [].filter.call(d.querySelectorAll('button, input'), function (x) { return !x.disabled && x.offsetParent !== null; });
+    if (!f.length) return;
+    var first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+  function openFastDialog() {
+    var built = buildList(), week = built.weekKey, list = built.staples, wn = isoWeek(parseIso(week));
+    closeSheet('fast-dialog', false);
+    closeBasisDialog(false);
+    var d = document.createElement('div');
+    d.id = 'fast-dialog';
+    d.className = 'overlay';
+    var rows = list.map(function (x) {
+      var st = x.s, q = st.qty != null && st.qty !== '' ? formatQty(st.qty) : '';
+      var amt = q + (st.unit ? (q ? ' ' : '') + st.unit : '');
+      return '<li><label class="basis-row"><input type="checkbox" data-sid="' + esc(st.id) + '"' + (x.on ? ' checked' : '') + '>' +
+        '<span class="basis-name">' + esc(cap(st.name)) + '</span>' + (amt ? ' <span class="basis-amt">' + esc(amt) + '</span>' : '') +
+        '<span class="basis-src">' + esc(aisleLabel(normAisle(st.aisle))) + '</span></label></li>';
+    }).join('');
+    var anyExplicit = list.some(function (x) { return x.explicit; });
+    var hint = !list.length ? 'Ingen faste husvarer ennå. Legg dem til under «Faste husvarer» nederst på Liste.'
+      : built.legacyStaples && !anyExplicit ? 'Denne uka var de faste varene med fra før. Fjern haken for det dere ikke trenger.'
+      : 'Kryss av det som skal på lista denne uka.';
+    d.innerHTML = '<div class="sheet basis-sheet fast-sheet" role="dialog" aria-modal="true" aria-labelledby="fast-h" aria-describedby="fast-hint" data-week="' + week + '">' +
+      '<div class="sheet-head"><h3 id="fast-h">Faste varer uke ' + wn + '</h3>' +
+      '<button type="button" class="icon-btn" data-fast="close" aria-label="Lukk">✕</button></div>' +
+      '<p class="hint" id="fast-hint">' + esc(hint) + '</p>' +
+      (list.length ? '<ul class="basis-rows">' + rows + '</ul>' +
+        '<div class="basis-actions"><button type="button" class="btn primary" data-fast="save" data-testid="faste-lagre"></button>' +
+        '<button type="button" class="btn" data-fast="close" data-testid="faste-avbryt">Avbryt</button></div>'
+        : '<div class="basis-actions"><button type="button" class="btn" data-fast="close" data-testid="faste-avbryt">Lukk</button></div>') + '</div>';
+    document.body.appendChild(d);
+    function label() {
+      var b = d.querySelector('[data-fast="save"]');
+      if (!b) return;
+      var n = d.querySelectorAll('.basis-rows input:checked').length;
+      b.textContent = n ? 'Legg ' + n + ' på lista' : 'Lagre – ingen på lista';
+    }
+    label();
+    d.addEventListener('change', label);
+    d.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-fast]');
+      var a = e.target === d ? 'close' : btn ? btn.getAttribute('data-fast') : null;
+      if (!a) return;
+      if (a === 'close') { closeSheet('fast-dialog', true); return; }
+      var map = {}, n = 0;
+      [].forEach.call(d.querySelectorAll('.basis-rows input'), function (cb) {
+        map[cb.getAttribute('data-sid')] = cb.checked ? 1 : -1;
+        if (cb.checked) n++;
+      });
+      ops.setFast(week, map);
+      closeSheet('fast-dialog', true);
+      flipRender();
+      toast(n ? n + (n === 1 ? ' fast vare' : ' faste varer') + ' på lista for uke ' + wn : 'Ingen faste varer på lista for uke ' + wn);
+    });
+    d.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); closeSheet('fast-dialog', true); return; }
+      if (e.key === 'Tab') trapTab(d, e);
+    });
+    var first = d.querySelector('.basis-rows input') || d.querySelector('[data-fast="close"]');
+    if (first) first.focus();
+  }
+  function closeSheet(id, restoreFocus) {
+    if (id === 'basis-dialog') { closeBasisDialog(restoreFocus); return; }
+    var d = document.getElementById(id);
+    if (!d) return;
+    d.parentNode.removeChild(d);
+    if (restoreFocus) {
+      var b = main.querySelector('[data-action="fast-open"]');
+      if (b) try { b.focus({ preventScroll: true }); } catch (e) { b.focus(); }
+    }
+  }
   function closeBasisDialog(restoreFocus) {
     var d = document.getElementById('basis-dialog');
     if (!d) return;
@@ -1361,11 +1489,6 @@
     }
   }
 
-  function matchesFilter(it, f) {
-    if (f === 'middag') return it.sources.indexOf('dinner') >= 0;
-    if (f === 'faste') return it.sources.indexOf('staple') >= 0;
-    return true;
-  }
   function isOpen(it) { return !it.checked && !(it.qty === 0); }
 
   function groupItems(items) {
@@ -1379,17 +1502,33 @@
     }).filter(function (g) { return g.items.length; });
   }
   function currentItems() { return currentList; }
-  function filterLabel(f) {
-    for (var i = 0; i < FILTERS.length; i++) if (FILTERS[i][0] === f) return FILTERS[i][1];
-    return '';
+  // v0.4.3b: grupper og rader i «Kilde»: middager i dagens rekkefølge, så «Lagt til selv». Avkryssede rader nederst
+  // i sin gruppe (samme regel som avdelingene i «Butikk»).
+  function sourceGroups(built) {
+    return built.source.concat(built.selv.rows.length ? [built.selv] : []).map(function (g) {
+      return { g: g, rows: g.rows.filter(function (r) { return r.item; })
+        .sort(function (x, y) { return (isOpen(x.item) ? 0 : 1) - (isOpen(y.item) ? 0 : 1) || x.name.localeCompare(y.name, 'nb'); }) };
+    });
   }
 
   function listAsText() {
     var built = buildList();
-    var f = ui.filter;
-    var lines = ['Handleliste – ' + weekLabel(built.dates) + (f !== 'alle' ? ' (' + filterLabel(f) + ')' : '')];
+    var kilde = ui.sort === 'kilde';
+    var lines = ['Handleliste – ' + weekLabel(built.dates) + (kilde ? ' (etter rett)' : '')];
     var any = false;
-    groupItems(built.items.filter(function (i) { return matchesFilter(i, f); })).forEach(function (g) {
+    if (kilde) {
+      // Som på skjermen: per rett med rettens egen mengde, bare ukryssede.
+      sourceGroups(built).forEach(function (x) {
+        var open = x.rows.filter(function (r) { return isOpen(r.item); });
+        if (!open.length) return;
+        any = true;
+        lines.push('');
+        lines.push(x.g.title);
+        open.forEach(function (r) { lines.push('- ' + cap(r.name) + (r.amount ? ', ' + r.amount : '')); });
+      });
+      return any ? lines.join('\n') + '\n' : '';
+    }
+    groupItems(built.items).forEach(function (g) {
       var open = g.items.filter(isOpen);
       if (!open.length) return;
       any = true;
@@ -1421,58 +1560,93 @@
       '<button type="submit" class="btn primary">Legg til</button></form>' + knownNamesDatalist() + '</details>';
   }
 
+  // v0.4.3b: «Legg til fra faste varer» (åpner vinduet med faste husvarer for valgt uke).
+  function fastButton(built) {
+    var n = built.staples.filter(function (x) { return x.on; }).length;
+    return '<button type="button" class="fast-btn" data-action="fast-open" data-testid="fra-faste" aria-haspopup="dialog">' +
+      '<span>＋ Legg til fra faste varer</span>' + (n ? '<span class="fast-count" data-testid="faste-antall">' + n + ' på lista</span>' : '') + '</button>';
+  }
+
+  function srcBits(i, extra) {
+    var src = [];
+    if (i.plan && i.plan.showNeed) src.push('behov ' + i.plan.needText);
+    if (i.recipes.length) src.push(i.recipes.join(', '));
+    if (i.basisvare) src.push('basisvare');
+    if (i.sources.indexOf('staple') >= 0) src.push('fast vare');
+    if (i.sources.indexOf('extra') >= 0) src.push('lagt til');
+    if (i.adjust && i.plan) src.push('justert ' + i.plan.adjText(i.adjust));
+    return src.concat(extra || []);
+  }
+  function itemLi(i, o) {
+    // Trengs mer enn det som ble krysset av: egen linje som brytes og aldri kuttes (v0.4.2).
+    var note = !i.checked && typeof i.tick === 'number' ? U.sizeText(i.tick, i.unit) + ' krysset av' : '';
+    return '<li class="item' + (i.checked ? ' checked' : '') + (i.qty === 0 ? ' zero' : '') + ' src-' + o.kind + '" data-key="' + esc(i.key) + '" data-row="' + esc(o.row) + '">' +
+      '<label><input type="checkbox" data-key="' + esc(i.key) + '"' + (i.checked ? ' checked' : '') + '>' +
+      '<span class="item-text"><span class="item-name">' + esc(cap(o.name)) + '</span>' +
+      (o.qu ? ' <span class="item-qty">' + esc(o.qu) + '</span>' : '') +
+      '<span class="item-src">' + (o.src.length ? '<span class="src-line">' + esc(o.src.join(' · ')) + '</span>' : '') +
+      (note ? '<span class="src-note" data-testid="krysset-av">' + esc(note) + '</span>' : '') + '</span></span></label>' +
+      (o.ctl ? '<div class="qty-ctl">' + o.ctl + '</div>' : '') + '</li>';
+  }
+  function butikkLi(i) {
+    var pureExtra = i.sources.length === 1 && i.sources[0] === 'extra';
+    return itemLi(i, { kind: i.source, row: i.key, name: i.name, qu: i.plan ? i.plan.text : '', src: srcBits(i),
+      ctl: (pureExtra ? '<button type="button" class="qbtn" data-action="remove-extra" aria-label="Fjern ' + esc(i.name) + '">✕</button>' : '') +
+        '<button type="button" class="qbtn" data-action="qty-dec" aria-label="Mindre ' + esc(i.name) + '"' + (i.qty ? '' : ' disabled') + '>−</button>' +
+        '<button type="button" class="qbtn" data-action="qty-inc" aria-label="Mer ' + esc(i.name) + '">+</button>' });
+  }
+  // «Kilde»-rad: rettens egen mengde; hva som faktisk kjøpes (sammenslått + pakninger) står i liten tekst.
+  // +/- finnes bare i «Butikk» (de endrer den sammenslåtte linja); egne varer kan fjernes med ✕ her også.
+  function kildeLi(r) {
+    var i = r.item, src = [];
+    var tot = i.plan ? i.plan.text : '';
+    // Bare når den sammenslåtte linja avviker: flere kilder, pakningsavrunding eller +/- (ikke «1 beger» vs «3 dl»).
+    if (tot && tot !== r.amount && (r.shared || i.plan.showNeed || i.adjust)) src.push('i butikken: ' + tot);
+    if (r.kind === 'dinner' && i.basisvare) src.push('basisvare');
+    if (r.kind === 'staple') src.push('fast vare');
+    return itemLi(i, { kind: r.kind === 'dinner' ? 'dinner' : r.kind, row: r.row, name: r.name, qu: r.amount, src: src,
+      ctl: r.kind === 'extra' ? '<button type="button" class="qbtn" data-action="remove-extra" data-extras="' + esc(r.extra_ids.join(',')) + '" aria-label="Fjern ' + esc(r.name) + '">✕</button>' : '' });
+  }
+
   function renderListSection() {
     var el = document.getElementById('list-section');
     if (!el) return;
     var built = buildList();
-    var f = ui.filter;
-    var shown = built.items.filter(function (i) { return matchesFilter(i, f); });
-    var left = shown.filter(isOpen).length;
+    var kilde = ui.sort === 'kilde';
+    var left = built.items.filter(isOpen).length;
     var anyChecked = built.items.some(function (i) { return i.checked; });
     var h = weekNav(built.dates);
     h += '<div class="list-head"><span class="sub" data-testid="middager">Handleliste · ' + built.dinners + ' middag' + (built.dinners === 1 ? '' : 'er') + '</span>' +
       '<span class="left" data-testid="igjen">' + left + ' igjen</span></div>';
-    h += '<div class="seg" role="group" aria-label="Filter">' + FILTERS.map(function (x) {
-      return '<button type="button" data-action="filter" data-filter="' + x[0] + '" aria-pressed="' + (f === x[0]) + '"' +
-        (f === x[0] ? ' class="on"' : '') + '>' + x[1] + '</button>';
+    h += basisBox(built.basis);
+    // v0.4.3b: sorteringsvelgeren står der filtervelgeren sto.
+    h += '<div class="seg sort" role="group" aria-label="Sortering" data-testid="sortering">' + SORTS.map(function (x) {
+      var on = ui.sort === x[0];
+      return '<button type="button" data-action="sort" data-sort="' + x[0] + '" aria-pressed="' + on + '" title="' + x[2] + '"' +
+        (on ? ' class="on"' : '') + '>' + x[1] + '</button>';
     }).join('') + '</div>';
-    h = h.replace('<div class="seg"', basisBox(built.basis) + '<div class="seg"');
     if (!built.items.length) {
-      h += '<p class="empty">Lista er tom. Velg middager under <a href="#uke">Uke</a>, eller legg til varer.</p>' + addItemForm();
+      h += '<p class="empty">Lista er tom. Velg middager under <a href="#uke">Uke</a>, eller legg til varer.</p>' + addItemForm() + fastButton(built);
       el.innerHTML = h;
       return;
     }
-    if (!built.dinners && f !== 'faste') h += '<p class="hint">Ingen middager valgt ennå. <a href="#uke">Velg middager</a>.</p>';
+    if (!built.dinners) h += '<p class="hint">Ingen middager valgt ennå. <a href="#uke">Velg middager</a>.</p>';
     h += '<div class="list-actions"><button type="button" class="btn primary" data-action="copy-text" data-testid="kopier">Kopier som tekst</button></div>';
-    h += addItemForm();
-    if (!shown.length) h += '<p class="empty">Ingen varer i dette filteret.</p>';
-    groupItems(shown).forEach(function (g) {
-      h += '<h3 class="aisle">' + esc(aisleLabel(g.aisle)) + '</h3><ul class="items">';
-      g.items.forEach(function (i) {
-        var src = [];
-        if (i.plan && i.plan.showNeed) src.push('behov ' + i.plan.needText);
-        // Trengs mer enn det som ble krysset av: egen linje som brytes og aldri kuttes (v0.4.2).
-        var note = !i.checked && typeof i.tick === 'number' ? U.sizeText(i.tick, i.unit) + ' krysset av' : '';
-        if (i.recipes.length) src.push(i.recipes.join(', '));
-        if (i.basisvare) src.push('basisvare');
-        if (i.sources.indexOf('staple') >= 0) src.push('fast vare');
-        if (i.sources.indexOf('extra') >= 0) src.push('lagt til');
-        if (i.adjust && i.plan) src.push('justert ' + i.plan.adjText(i.adjust));
-        var qu = i.plan ? i.plan.text : '';
-        var pureExtra = i.sources.length === 1 && i.sources[0] === 'extra';
-        h += '<li class="item' + (i.checked ? ' checked' : '') + (i.qty === 0 ? ' zero' : '') + ' src-' + i.source + '" data-key="' + esc(i.key) + '">' +
-          '<label><input type="checkbox" data-key="' + esc(i.key) + '"' + (i.checked ? ' checked' : '') + '>' +
-          '<span class="item-text"><span class="item-name">' + esc(cap(i.name)) + '</span>' +
-          (qu ? ' <span class="item-qty">' + esc(qu) + '</span>' : '') +
-          '<span class="item-src">' + (src.length ? '<span class="src-line">' + esc(src.join(' · ')) + '</span>' : '') +
-          (note ? '<span class="src-note" data-testid="krysset-av">' + esc(note) + '</span>' : '') + '</span></span></label>' +
-          '<div class="qty-ctl">' +
-          (pureExtra ? '<button type="button" class="qbtn" data-action="remove-extra" aria-label="Fjern ' + esc(i.name) + '">✕</button>' : '') +
-          '<button type="button" class="qbtn" data-action="qty-dec" aria-label="Mindre ' + esc(i.name) + '"' + (i.qty ? '' : ' disabled') + '>−</button>' +
-          '<button type="button" class="qbtn" data-action="qty-inc" aria-label="Mer ' + esc(i.name) + '">+</button></div></li>';
+    h += addItemForm() + fastButton(built);
+    if (kilde) {
+      sourceGroups(built).forEach(function (x) {
+        h += '<h3 class="aisle src-head" data-group="' + esc(x.g.id) + '">' + esc(x.g.title) + '</h3>';
+        if (!x.rows.length) {
+          h += '<p class="src-empty">' + (x.g.skipped ? 'Bare basisvarer – ingen på lista' : 'Ingen varer') + '</p>';
+          return;
+        }
+        h += '<ul class="items">' + x.rows.map(kildeLi).join('') + '</ul>';
       });
-      h += '</ul>';
-    });
+    } else {
+      groupItems(built.items).forEach(function (g) {
+        h += '<h3 class="aisle">' + esc(aisleLabel(g.aisle)) + '</h3><ul class="items">' + g.items.map(butikkLi).join('') + '</ul>';
+      });
+    }
     // «Fjern avkrysning» ligger nederst, langt fra «Kopier som tekst» og tommelsonen, og må bekreftes.
     h += '<div class="list-foot"><button type="button" class="btn small" data-action="uncheck-all" data-testid="fjern-avkrysning"' +
       (anyChecked ? '' : ' hidden') + '>Fjern avkrysning …</button></div>';
@@ -1523,19 +1697,20 @@
   var FLIP_MS = 220;
   function flipRender(fn) {
     var before = {};
-    main.querySelectorAll('.item[data-key]').forEach(function (el) { before[el.getAttribute('data-key')] = el.getBoundingClientRect().top; });
-    var active = document.activeElement, focusKey = active && active.matches && active.matches('.item input[type=checkbox]') ? active.getAttribute('data-key') : null;
+    // v0.4.3b: radene identifiseres med data-row (i «Kilde» kan samme vare stå under flere retter).
+    main.querySelectorAll('.item[data-row]').forEach(function (el) { before[el.getAttribute('data-row')] = el.getBoundingClientRect().top; });
+    var active = document.activeElement, focusKey = active && active.matches && active.matches('.item input[type=checkbox]') ? active.closest('.item').getAttribute('data-row') : null;
     var sx = window.scrollX, sy = window.scrollY;
     (fn || renderListSection)();
     if (window.scrollY !== sy) window.scrollTo(sx, sy);
     if (focusKey && document.activeElement !== active) {
-      var fk = main.querySelector('.item input[data-key="' + (window.CSS && CSS.escape ? CSS.escape(focusKey) : focusKey) + '"]');
+      var fk = main.querySelector('.item[data-row="' + (window.CSS && CSS.escape ? CSS.escape(focusKey) : focusKey) + '"] input[type=checkbox]');
       if (fk) try { fk.focus({ preventScroll: true }); } catch (e) { /* ignorer */ }
     }
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     var moved = [];
-    main.querySelectorAll('.item[data-key]').forEach(function (el) {
-      var b = before[el.getAttribute('data-key')];
+    main.querySelectorAll('.item[data-row]').forEach(function (el) {
+      var b = before[el.getAttribute('data-row')];
       if (b == null) return;
       var d = b - el.getBoundingClientRect().top;
       if (Math.abs(d) < 1) return;
@@ -1553,7 +1728,8 @@
   // tegne alt på nytt. Faller tilbake til full tegning hvis noe ikke stemmer.
   function reorderInPlace() {
     var built = buildList();
-    var shown = built.items.filter(function (i) { return matchesFilter(i, ui.filter); });
+    if (ui.sort === 'kilde') { renderListSection(); return; }
+    var shown = built.items;
     var groups = groupItems(shown), ok = true, plan = [];
     groups.forEach(function (g) {
       var h = [].filter.call(main.querySelectorAll('h3.aisle'), function (e) { return e.textContent === aisleLabel(g.aisle); })[0];
@@ -1602,10 +1778,9 @@
     if (!el) return;
     var h = '<details class="staples"' + (ui.staplesOpen ? ' open' : '') + '><summary>Faste husvarer <span class="count">' +
       state.staples.length + '</span></summary>' +
-      '<p class="hint">Tas med i lista hver uke. Fjern haken for å hoppe over en vare.</p><ul class="staple-rows">';
+      '<p class="hint">Varer dere ofte kjøper. De kommer på lista bare når dere velger dem med «Legg til fra faste varer» (per uke). Endringer her gjelder alle uker.</p><ul class="staple-rows">';
     state.staples.forEach(function (s) {
       h += '<li class="staple-row" data-id="' + esc(s.id) + '">' +
-        '<input type="checkbox" class="st-active" aria-label="Med i lista"' + (s.active !== false ? ' checked' : '') + '>' +
         '<input type="text" class="st-name" aria-label="Vare" value="' + esc(s.name) + '">' +
         '<input type="text" class="st-qty" inputmode="decimal" aria-label="Mengde" value="' + esc(formatQty(s.qty)) + '">' +
         '<select class="st-unit" aria-label="Enhet">' + unitOptions(s.unit) + '</select>' +
@@ -1711,17 +1886,26 @@
       uncheckAll();
     } else if (a === 'basis-open') {
       openBasisDialog();
-    } else if (a === 'filter') {
-      ui.filter = btn.getAttribute('data-filter');
+    } else if (a === 'fast-open') {
+      openFastDialog();
+    } else if (a === 'sort') {
+      // v0.4.3b: Butikk / Kilde, huskes per telefon (localStorage), synkes ikke.
+      ui.sort = btn.getAttribute('data-sort') === 'kilde' ? 'kilde' : 'butikk';
+      lsSet(SORT_KEY, ui.sort);
       renderListSection();
+      var sb = main.querySelector('[data-action="sort"][data-sort="' + ui.sort + '"]');
+      if (sb) try { sb.focus({ preventScroll: true }); } catch (x) { sb.focus(); }
     } else if (a === 'qty-inc' || a === 'qty-dec') {
       adjustItem(btn.closest('.item').getAttribute('data-key'), a === 'qty-inc' ? 1 : -1);
     } else if (a === 'remove-extra') {
       var key = btn.closest('.item').getAttribute('data-key');
       var it = currentItems().filter(function (i) { return i.key === key; })[0];
       if (!it) return;
-      ops.removeExtras(it.extra_ids.slice());
-      if (it.adjust) ops.clearAdjust(it.week, key);
+      // «Kilde»: ✕ fjerner bare egne varer på denne raden (data-extras); «Butikk»: hele den rene egen-linja.
+      var ids = btn.hasAttribute('data-extras') ? btn.getAttribute('data-extras').split(',').filter(Boolean) : it.extra_ids.slice();
+      ops.removeExtras(ids);
+      var pure = it.sources.length === 1 && it.sources[0] === 'extra';
+      if (it.adjust && pure && it.extra_ids.every(function (x) { return ids.indexOf(x) >= 0; })) ops.clearAdjust(it.week, key);
       renderListSection();
     } else if (a === 'delete-staple') {
       ops.deleteStaple(btn.closest('.staple-row').getAttribute('data-id'));
@@ -1819,16 +2003,14 @@
       if (document.getElementById('ai-staple').checked) {
         item.id = uid('s'); item.active = true;
         ops.addStaple(item);
+        var fm = {}; fm[item.id] = 1;
+        ops.setFast(wkDates[0], fm);        // v0.4.3b: valgt for denne uka, ellers ville den ikke synes
         msg = 'Lagt til i lista og i faste husvarer';
       } else {
         item.id = uid('x'); item.week = wkDates[0]; item.created = Date.now();
         ops.addExtra(item);
         msg = 'Lagt til i lista for uke ' + isoWeek(parseIso(wkDates[0]));
       }
-      // Den nye varen skal alltid synes: skjuler filteret den, byttes det til Alle.
-      var newKey = U.keyFor(normName(name), item.unit || '');
-      var added = buildList().items.filter(function (i) { return i.key === newKey; })[0];
-      if (added && !matchesFilter(added, ui.filter)) { ui.filter = 'alle'; msg += ' – viser Alle'; }
       toast(msg);
       ui.addOpen = true;
       renderListSection(); renderStaplesSection();
@@ -1847,6 +2029,7 @@
 
   window.addEventListener('hashchange', function () {
     closeBasisDialog(false);
+    closeSheet('fast-dialog', false);
     ui.error = '';
     if (!/^#husstand/.test(location.hash)) ui.justCreated = false;
     route(); window.scrollTo(0, 0);

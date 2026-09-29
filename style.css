@@ -313,3 +313,16 @@ select option:disabled { color: #6f7773; }
 .basis-amt { color: var(--ink); }
 .basis-src { flex-basis: 100%; padding-left: 32px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .basis-actions { display: grid; gap: 8px; }
+
+/* v0.4.3b: sortering Butikk/Kilde (erstatter filtervelgeren), faste varer per uke */
+.seg.sort { grid-template-columns: repeat(2, 1fr); }
+.fast-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 48px; box-sizing: border-box;
+  margin: 8px 0 4px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  color: var(--brand); font: inherit; font-weight: 700; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.fast-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.fast-count { flex: none; font-size: 13px; font-weight: 600; color: var(--muted); }
+.src-head { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+.src-empty { margin: 0 2px; font-size: 13px; color: var(--muted); }
+.staple-row:not(.add) { grid-template-columns: 1fr 52px 64px 44px; grid-template-areas: "n q u d" "s s s s"; }
