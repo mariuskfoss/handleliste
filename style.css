@@ -85,7 +85,7 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
 .section-title { margin: 0 0 8px; }
 .suggest-nav { display: flex; align-items: center; gap: 0; }
 .nav-arrow {
-  min-width: 40px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none;
+  min-width: 44px; height: 44px; margin: -4px 0; padding: 0; border: 0; border-radius: 8px; background: none;
   color: var(--muted); font-size: 26px; line-height: 1; cursor: pointer;
 }
 .nav-arrow:active { background: var(--card-2); color: var(--ink); }
@@ -102,7 +102,7 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
   overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
 .suggest-meta { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.suggest-card .btn.small { flex: none; min-height: 40px; padding: 0 14px; }
+.suggest-card .btn.small { flex: none; min-height: 44px; padding: 0 14px; }
 .suggest-card.from-right { animation: suggest-in-r .18s ease-out; }
 .suggest-card.from-left { animation: suggest-in-l .18s ease-out; }
 @keyframes suggest-in-r { from { transform: translateX(28px); opacity: .3; } to { transform: none; opacity: 1; } }
@@ -172,7 +172,11 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .item-text { flex: 1; min-width: 0; }
 .item-name { font-weight: 600; }
 .item-qty { color: var(--ink); }
-.item-src { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-src { display: block; font-size: 12px; color: var(--muted); }
+.src-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* v0.4.2: «… krysset av» på egen linje som brytes, aldri kuttes. */
+.src-note { display: block; white-space: normal; overflow-wrap: anywhere; color: #e6cf8a; font-weight: 600; font-style: normal; }
+.item.moving { position: relative; z-index: 1; background: var(--card); }
 .item.src-staple .item-src { font-style: italic; }
 .item.checked .item-name, .item.checked .item-qty { text-decoration: line-through; color: var(--muted); }
 
@@ -218,10 +222,11 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
   transition: opacity .2s, transform .2s; z-index: 20; width: max-content; max-width: calc(100vw - 24px); text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.show.has-action { pointer-events: auto; }
+/* v0.4.2: bare «Angre» fanger trykk; resten av toasten slipper trykk gjennom til fanelinja. */
+.toast.show.has-action .toast-act { pointer-events: auto; }
 .toast .toast-msg { padding: 6px 0; }
 .toast-act {
-  flex: none; min-height: 40px; padding: 0 14px; margin-right: -8px; border: 0; border-radius: 10px;
+  flex: none; min-height: 44px; padding: 0 14px; margin-right: -8px; border: 0; border-radius: 10px;
   background: #1f3a2a; color: #d7f5e1; font: inherit; font-weight: 700; cursor: pointer;
 }
 
@@ -248,7 +253,7 @@ a { color: var(--brand); }
 .badge { align-self: flex-start; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--brand); background: var(--brand-soft); border-radius: 6px; padding: 2px 6px; }
 
 .seg { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; margin-bottom: 10px; }
-.seg button { min-height: 38px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.seg button { min-height: 44px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
 .seg button.on { background: var(--brand-soft); color: var(--brand); }
 
 .add-item { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 12px; margin: 8px 0 4px; }
@@ -260,8 +265,8 @@ a { color: var(--brand); }
 
 .item { display: flex; align-items: center; }
 .item label { flex: 1; min-width: 0; }
-.qty-ctl { display: flex; gap: 6px; padding-right: 10px; flex: none; }
-.qbtn { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); font-size: 20px; line-height: 1; cursor: pointer; padding: 0; }
+.qty-ctl { display: flex; gap: 4px; padding-right: 8px; flex: none; }
+.qbtn { width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); font-size: 20px; line-height: 1; cursor: pointer; padding: 0; }
 .qbtn:disabled { opacity: .35; }
 .item.zero .item-name, .item.zero .item-qty { color: var(--muted); }
 .item.checked .qbtn { opacity: .5; }
@@ -278,3 +283,7 @@ select option:disabled { color: #6f7773; }
 [data-page="husstand"] p, [data-page="join"] p { margin: 0 0 12px; }
 #share-link { font-size: 14px; color: var(--muted); }
 .footer-tools .linkbtn { display: inline-block; }
+
+/* v0.4.2 */
+.week-tools .btn.small { min-height: 44px; }
+@media (prefers-reduced-motion: reduce) { .item.moving { transition: none !important; } }

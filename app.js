@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.1 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Ukeshandel v0.4.2 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -44,7 +44,7 @@
     return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
   function normName(s) {
-    return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    return String(s || '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
   }
   function cap(s) {
     s = String(s || '');
@@ -108,8 +108,10 @@
     return '<div class="week-nav">' +
       '<button type="button" class="icon-btn" data-action="week-prev" aria-label="Forrige uke">‹</button>' +
       '<div class="week-title"><h2>' + esc(weekLabel(dates)) + '</h2>' +
-      (ui.weekOffset !== 0 ? '<button type="button" class="linkbtn" data-action="week-now">Til denne uka</button>'
-        : '<span class="sub">Denne uka</span>') + '</div>' +
+      // v0.4.2: «Til denne uka» bare når man er på en annen uke enn denne og neste (neste uke får en rolig etikett).
+      (ui.weekOffset === 0 ? '<span class="sub">Denne uka</span>'
+        : ui.weekOffset === 1 ? '<span class="sub" data-testid="neste-uke">Neste uke</span>'
+        : '<button type="button" class="linkbtn" data-action="week-now">Til denne uka</button>') + '</div>' +
       '<button type="button" class="icon-btn" data-action="week-next" aria-label="Neste uke">›</button></div>';
   }
   function dayName(iso) { return DAY_NAMES[(parseIso(iso).getDay() + 6) % 7]; }
@@ -1130,7 +1132,9 @@
     function add(src, from, name, qty, unit, aisle, extraId) {
       var nn = normName(name);
       if (!nn) return;
-      unit = unit || '';
+      unit = U.normUnit(unit);             // v0.4.2: «L», " dl", «liter» … → l/dl
+      // v0.4.2: en kjent pakningsvare uten enhet og uten mengde (f.eks. fast vare der mengden er tømt) = én pakning.
+      if ((qty == null || qty === '') && /^(|pk|stk|kartong|beger)$/.test(unit) && U.packFor(nn) && U.conversion(nn, unit)) qty = 1;
       var conv = U.conversion(nn, unit);
       var base = conv ? conv.base : unit;
       var key = nn + '|' + base;
@@ -1225,8 +1229,9 @@
     return AISLES.map(function (a) {
       return {
         aisle: a,
+        // v0.4.2: avkryssede varer (og varer satt til 0) nederst i sin avdeling; alfabetisk innenfor hver del.
         items: items.filter(function (i) { return i.aisle === a; })
-          .sort(function (x, y) { return x.name.localeCompare(y.name, 'nb'); })
+          .sort(function (x, y) { return (isOpen(x) ? 0 : 1) - (isOpen(y) ? 0 : 1) || x.name.localeCompare(y.name, 'nb'); })
       };
     }).filter(function (g) { return g.items.length; });
   }
@@ -1302,7 +1307,8 @@
       g.items.forEach(function (i) {
         var src = [];
         if (i.plan && i.plan.showNeed) src.push('behov ' + i.plan.needText);
-        if (!i.checked && typeof i.tick === 'number') src.push(U.sizeText(i.tick, i.unit) + ' krysset av');   // trengs mer nå (vises tidlig, lina kuttes)
+        // Trengs mer enn det som ble krysset av: egen linje som brytes og aldri kuttes (v0.4.2).
+        var note = !i.checked && typeof i.tick === 'number' ? U.sizeText(i.tick, i.unit) + ' krysset av' : '';
         if (i.recipes.length) src.push(i.recipes.join(', '));
         if (i.sources.indexOf('staple') >= 0) src.push('fast vare');
         if (i.sources.indexOf('extra') >= 0) src.push('lagt til');
@@ -1313,7 +1319,8 @@
           '<label><input type="checkbox" data-key="' + esc(i.key) + '"' + (i.checked ? ' checked' : '') + '>' +
           '<span class="item-text"><span class="item-name">' + esc(cap(i.name)) + '</span>' +
           (qu ? ' <span class="item-qty">' + esc(qu) + '</span>' : '') +
-          '<span class="item-src">' + esc(src.join(' · ')) + '</span></span></label>' +
+          '<span class="item-src">' + (src.length ? '<span class="src-line">' + esc(src.join(' · ')) + '</span>' : '') +
+          (note ? '<span class="src-note" data-testid="krysset-av">' + esc(note) + '</span>' : '') + '</span></span></label>' +
           '<div class="qty-ctl">' +
           (pureExtra ? '<button type="button" class="qbtn" data-action="remove-extra" aria-label="Fjern ' + esc(i.name) + '">✕</button>' : '') +
           '<button type="button" class="qbtn" data-action="qty-dec" aria-label="Mindre ' + esc(i.name) + '"' + (i.qty ? '' : ' disabled') + '>−</button>' +
@@ -1341,10 +1348,10 @@
     if (!window.confirm('Fjerne avkrysningen på ' + n + (n === 1 ? ' vare' : ' varer') + ' i uke ' + wn + '?' +
       (hh ? ' Dette gjelder hele husstanden.' : ''))) return;
     ops.setChecks(wk, m);
-    renderListSection();
+    flipRender();
     toast('Avkrysning fjernet (' + n + (n === 1 ? ' vare)' : ' varer)'), UNDO_MS, { label: 'Angre', run: function () {
       ops.setChecks(wk, prev);   // gjenoppretter nøyaktig de samme avkrysningene (også hos den andre telefonen)
-      renderListSection();
+      flipRender();               // rekkefølgen følger av avkrysningene, så plasseringene blir de samme som før
       toast('Avkrysningen er tilbake');
     } });
   }
@@ -1363,8 +1370,87 @@
     if (!(pl && pl.packs) && ratio !== Math.round(ratio)) next = round3((dir > 0 ? Math.ceil(ratio) : Math.floor(ratio)) * step);
     var own = round3(next - (it.base_qty || 0) - (it.adjust_legacy || 0));
     ops.adjust(it.week, key, own, round3(own - (it.adjust_own || 0)));
-    renderListSection();
+    flipRender();                 // auto-ukrysset vare glir opp igjen
   }
+
+  // v0.4.2: tegn lista på nytt og la radene gli til ny plass (FLIP). Siden ruller ikke: varen flyttes innenfor
+  // sin avdeling, så alt over avdelingen står stille, og rulleposisjonen settes tilbake om nettleseren flytter den.
+  var FLIP_MS = 220;
+  function flipRender(fn) {
+    var before = {};
+    main.querySelectorAll('.item[data-key]').forEach(function (el) { before[el.getAttribute('data-key')] = el.getBoundingClientRect().top; });
+    var active = document.activeElement, focusKey = active && active.matches && active.matches('.item input[type=checkbox]') ? active.getAttribute('data-key') : null;
+    var sx = window.scrollX, sy = window.scrollY;
+    (fn || renderListSection)();
+    if (window.scrollY !== sy) window.scrollTo(sx, sy);
+    if (focusKey && document.activeElement !== active) {
+      var fk = main.querySelector('.item input[data-key="' + (window.CSS && CSS.escape ? CSS.escape(focusKey) : focusKey) + '"]');
+      if (fk) try { fk.focus({ preventScroll: true }); } catch (e) { /* ignorer */ }
+    }
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var moved = [];
+    main.querySelectorAll('.item[data-key]').forEach(function (el) {
+      var b = before[el.getAttribute('data-key')];
+      if (b == null) return;
+      var d = b - el.getBoundingClientRect().top;
+      if (Math.abs(d) < 1) return;
+      el.style.transition = 'none';
+      el.style.transform = 'translateY(' + d + 'px)';
+      el.classList.add('moving');
+      moved.push(el);
+    });
+    if (!moved.length) return;
+    void document.body.offsetHeight;
+    moved.forEach(function (el) { el.style.transition = 'transform ' + FLIP_MS + 'ms ease'; el.style.transform = ''; });
+    setTimeout(function () { moved.forEach(function (el) { el.style.transition = ''; el.classList.remove('moving'); }); }, FLIP_MS + 40);
+  }
+  // Avkrysning: flytt de eksisterende radene (samme elementer, så fokus og avkrysningsboksen beholdes) i stedet for å
+  // tegne alt på nytt. Faller tilbake til full tegning hvis noe ikke stemmer.
+  function reorderInPlace() {
+    var built = buildList();
+    var shown = built.items.filter(function (i) { return matchesFilter(i, ui.filter); });
+    var groups = groupItems(shown), ok = true, plan = [];
+    groups.forEach(function (g) {
+      var h = [].filter.call(main.querySelectorAll('h3.aisle'), function (e) { return e.textContent === aisleLabel(g.aisle); })[0];
+      var ul = h && h.nextElementSibling;
+      if (!ul || ul.children.length !== g.items.length) { ok = false; return; }
+      var lis = g.items.map(function (i) {
+        return [].filter.call(ul.children, function (li) { return li.getAttribute('data-key') === i.key; })[0];
+      });
+      if (lis.some(function (li) { return !li; })) { ok = false; return; }
+      plan.push([ul, lis, g.items]);
+    });
+    if (!ok) { renderListSection(); return; }
+    plan.forEach(function (p) {
+      p[1].forEach(function (li, n) {
+        var i = p[2][n];
+        li.classList.toggle('checked', i.checked);
+        var cb = li.querySelector('input[type=checkbox]');
+        if (cb && cb.checked !== i.checked) cb.checked = i.checked;
+        var note = li.querySelector('.src-note');
+        if (note && i.checked) note.parentNode.removeChild(note);
+        if (p[0].children[n] !== li) p[0].insertBefore(li, p[0].children[n] || null);
+      });
+    });
+    var l = main.querySelector('[data-testid="igjen"]');
+    if (l) l.textContent = shown.filter(isOpen).length + ' igjen';
+    var ub = main.querySelector('[data-action="uncheck-all"]');
+    if (ub) ub.hidden = !built.items.some(function (i) { return i.checked; });
+  }
+  // Dobbelttrykk: mens raden glir bort (og neste vare glir inn under fingeren) ignoreres et nytt trykk på nøyaktig
+  // samme sted, så et utilsiktet dobbelttrykk verken krysser av feil vare eller fjerner avkrysningen igjen.
+  // Alle andre trykk (andre steder, eller etter animasjonen) virker som normalt.
+  var lastTick = null;
+  main.addEventListener('click', function (e) {
+    var lab = e.target.closest && e.target.closest('.item label');
+    if (!lab) return;
+    var row = lab.closest('.item'), key = row.getAttribute('data-key');
+    var now = Date.now();
+    if (lastTick && row.classList.contains('moving') && now - lastTick.t < FLIP_MS && e.clientX && Math.abs(e.clientX - lastTick.x) < 12 && Math.abs(e.clientY - lastTick.y) < 12) {
+      e.preventDefault(); e.stopPropagation(); return;
+    }
+    if (e.clientX || e.clientY) lastTick = { t: now, x: e.clientX, y: e.clientY, key: key };   // ikke tastatur/syntetiske klikk
+  }, true);
 
   function renderStaplesSection() {
     var el = document.getElementById('staples-section');
@@ -1522,12 +1608,8 @@
       });
       if (!m.hasOwnProperty(key)) m[key] = t.checked;
       ops.setChecks(week, m);
-      t.closest('.item').classList.toggle('checked', t.checked);
-      var shown = cur.filter(function (i) { return matchesFilter(i, ui.filter); });
-      var l = main.querySelector('[data-testid="igjen"]');
-      if (l) l.textContent = shown.filter(isOpen).length + ' igjen';
-      var ub = main.querySelector('[data-action="uncheck-all"]');
-      if (ub) ub.hidden = !cur.some(function (i) { return i.checked; });
+      // v0.4.2: avkrysset vare glir ned nederst i avdelingen (ukrysset glir opp igjen).
+      flipRender(reorderInPlace);
     } else if (t.classList.contains('ing-name') || t.id === 'ai-name') {
       var row = t.classList.contains('ing-name') ? t.closest('.ing-row') : null;
       if (row && row.getAttribute('data-new') !== '1') return;

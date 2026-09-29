@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.1 — enheter og pakninger på handlelista.
+/* Ukeshandel v0.4.2 — enheter og pakninger på handlelista (v0.4.1, enhetsnormalisering v0.4.2).
  * Rene funksjoner (ingen DOM), lastes før app.js og kan testes i Node.
  *
  * Regler:
@@ -23,12 +23,13 @@
 
   // Kjente norske pakningsstørrelser (i grunnenhet). conv: hvordan andre enheter regnes om for denne varen.
   // Uten enhet («Melk 1») betyr antall pakninger (minste pakning) for varer målt i ml/g, antall stk ellers.
+  // v0.4.2: «stk» betyr også én pakning der det er entydig (1 stk melk = 1 kartong), men ikke for poteter/sjampinjong (stykker).
   var PACK_TABLE = [
-    { names: ['melk', 'helmelk', 'lettmelk', 'skummet melk', 'ekstra lett melk', 'h-melk'], base: 'ml', packs: [1000, 1750] },
-    { names: ['matfløte', 'lett matfløte', 'kremfløte', 'fløte'], base: 'ml', packs: [300, 500] },
-    { names: ['rømme', 'lettrømme', 'seterrømme'], base: 'ml', packs: [300], conv: { beger: 300 } },
-    { names: ['kjøttdeig', 'karbonadedeig', 'kyllingkjøttdeig', 'svinekjøttdeig'], base: 'g', packs: [400] },
-    { names: ['smør', 'meierismør'], base: 'g', packs: [250, 500], conv: { ss: 15, ts: 5, pk: 250 } },
+    { names: ['melk', 'helmelk', 'lettmelk', 'skummet melk', 'ekstra lett melk', 'h-melk'], base: 'ml', packs: [1000, 1750], conv: { stk: 1000, kartong: 1000 } },
+    { names: ['matfløte', 'lett matfløte', 'kremfløte', 'fløte'], base: 'ml', packs: [300, 500], conv: { stk: 300, kartong: 300 } },
+    { names: ['rømme', 'lettrømme', 'seterrømme'], base: 'ml', packs: [300], conv: { beger: 300, stk: 300 } },
+    { names: ['kjøttdeig', 'karbonadedeig', 'kyllingkjøttdeig', 'svinekjøttdeig'], base: 'g', packs: [400], conv: { stk: 400 } },
+    { names: ['smør', 'meierismør'], base: 'g', packs: [250, 500], conv: { ss: 15, ts: 5, pk: 250, stk: 250 } },
     { names: ['poteter', 'potet', 'mandelpoteter'], base: 'g', packs: [1000, 2500] },
     { names: ['spaghetti', 'penne', 'fusilli', 'makaroni', 'tagliatelle', 'linguine'], base: 'g', packs: [500] },
     { names: ['champignon', 'sjampinjong'], base: 'g', packs: [250] },
@@ -48,9 +49,17 @@
 
   function packFor(nn) { return PACKS[nn] || null; }
 
+  // v0.4.2: enheter fra eldre data/andre klienter kan ha store bokstaver, mellomrom eller skrives ut («L», " dl", «liter»).
+  var ALIAS = { liter: 'l', litre: 'l', ltr: 'l', desiliter: 'dl', milliliter: 'ml', gram: 'g', gr: 'g', kilo: 'kg', kilogram: 'kg',
+    stykk: 'stk', stykker: 'stk', pakke: 'pk', pakker: 'pk', pakning: 'pk', pkt: 'pk', spiseskje: 'ss', spiseskjeer: 'ss', teskje: 'ts', teskjeer: 'ts' };
+  function normUnit(u) {
+    u = String(u == null ? '' : u).replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toLowerCase().replace(/\.$/, '');
+    return ALIAS[u] || u;
+  }
+
   // Hvordan én ingredienslinje (navn + enhet) regnes om. Gir grunnenhet og faktor, eller null (ingen omregning).
   function conversion(nn, unit) {
-    unit = unit || '';
+    unit = normUnit(unit);
     var p = PACKS[nn];
     if (p) {
       if (p.conv && p.conv[unit] != null) return { base: p.base, factor: p.conv[unit] };
@@ -67,7 +76,7 @@
   // Nøkkel for linja på handlelista: navn|grunnenhet (ml/g/…) når enheten kan regnes om, ellers navn|enhet som før.
   function keyFor(nn, unit) {
     var c = conversion(nn, unit);
-    return nn + '|' + (c ? c.base : (unit || ''));
+    return nn + '|' + (c ? c.base : normUnit(unit));
   }
   function factorFor(nn, unit) { var c = conversion(nn, unit); return c ? c.factor : 1; }
 
@@ -186,7 +195,7 @@
   }
 
   root.UkeshandelUnits = {
-    UNIT: UNIT, PACK_TABLE: PACK_TABLE, packFor: packFor, conversion: conversion, keyFor: keyFor,
+    UNIT: UNIT, PACK_TABLE: PACK_TABLE, packFor: packFor, normUnit: normUnit, conversion: conversion, keyFor: keyFor,
     factorFor: factorFor, packCombo: packCombo, plan: plan, spoonText: spoonText, sizeText: sizeText
   };
 })(typeof window !== 'undefined' ? window : globalThis);
