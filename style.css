@@ -1,17 +1,19 @@
 :root {
-  --bg: #f6f5f1;
-  --card: #ffffff;
-  --ink: #1f2522;
-  --muted: #6b716d;
-  --line: #e2e0d9;
-  --brand: #2f6b4f;
-  --brand-ink: #ffffff;
-  --brand-soft: #e3efe8;
-  --danger: #b3261e;
+  /* Mørkt tema (standard): rolig, ikke neon, god kontrast også i sterkt butikklys. */
+  color-scheme: dark;
+  --bg: #121617;
+  --card: #1c2224;
+  --card-2: #242b2e;
+  --ink: #eceeed;
+  --muted: #a9b1ad;
+  --line: #333b3e;
+  --brand: #7cc4a0;
+  --brand-ink: #0d1a13;
+  --brand-soft: #22372d;
+  --danger: #f0a39c;
   --radius: 12px;
   --nav-h: 64px;
-}
-* { box-sizing: border-box; }
+}* { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
@@ -27,10 +29,10 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 
 .topbar {
   position: sticky; top: 0; z-index: 5;
-  background: var(--brand); color: var(--brand-ink);
+  background: var(--card); color: var(--ink); border-bottom: 1px solid var(--line);
   padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
 }
-.topbar h1 { font-size: 18px; font-weight: 700; letter-spacing: .2px; }
+.topbar h1 { font-size: 18px; font-weight: 700; letter-spacing: .2px; color: var(--brand); }
 
 main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 12px; }
@@ -54,7 +56,7 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
   -webkit-tap-highlight-color: transparent;
 }
 .btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
-.btn.danger { color: var(--danger); border-color: #e7c3c0; }
+.btn.danger { color: var(--danger); border-color: #6a3a36; }
 .btn:active { transform: translateY(1px); }
 .icon-btn {
   min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 10px;
@@ -170,19 +172,55 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
   text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 600;
   -webkit-tap-highlight-color: transparent;
 }
-.tabs a .ico { font-size: 20px; filter: grayscale(1); opacity: .7; }
+.tabs a .ico { font-size: 20px; filter: grayscale(1); opacity: .6; }
 .tabs a.active { color: var(--brand); }
 .tabs a.active .ico { filter: none; opacity: 1; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 12px);
   transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none;
-  background: #222; color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 14px;
+  background: #e9ecea; color: #111; padding: 10px 16px; border-radius: 999px; font-size: 14px;
   transition: opacity .2s, transform .2s; z-index: 20; max-width: 90vw; text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 30; display: flex; align-items: flex-end; justify-content: center; }
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 30; display: flex; align-items: flex-end; justify-content: center; }
 .sheet { background: var(--card); width: 100%; max-width: 640px; border-radius: 16px 16px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 10px; }
 .sheet textarea { font-family: inherit; font-size: 15px; min-height: 240px; }
 [hidden] { display: none !important; }
+
+/* v0.1 */
+a { color: var(--brand); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn.small { min-height: 38px; padding: 0 12px; font-size: 14px; }
+.week-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
+.week-tools .summary { margin: 0; text-align: left; }
+.notice { background: var(--brand-soft); color: var(--ink); border: 1px solid #35533f; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 0 0 10px; }
+.day-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 0; }
+.day-foot .day-meta { margin-top: 6px; }
+.day-foot .linkbtn { padding: 6px 0 0; font-size: 13px; white-space: nowrap; }
+.day.has-oneoff { border-style: dashed; border-color: #5b7a68; }
+.oneoff { display: flex; flex-direction: column; gap: 2px; }
+.oneoff-name { font-weight: 650; font-size: 17px; }
+.oneoff-actions { display: flex; gap: 8px; margin-top: 8px; }
+.badge { align-self: flex-start; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--brand); background: var(--brand-soft); border-radius: 6px; padding: 2px 6px; }
+
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 3px; gap: 3px; margin-bottom: 10px; }
+.seg button { min-height: 38px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.seg button.on { background: var(--brand-soft); color: var(--brand); }
+
+.add-item { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 12px; margin: 8px 0 4px; }
+.add-item summary { padding: 12px 0; font-weight: 700; color: var(--brand); cursor: pointer; }
+.item-add-form { display: grid; gap: 8px; padding-bottom: 12px; }
+.ai-row { display: grid; grid-template-columns: 64px 1fr 1.4fr; gap: 6px; }
+.check { display: flex; align-items: center; gap: 10px; font-size: 15px; min-height: 36px; }
+.check input { width: 22px; height: 22px; accent-color: var(--brand); }
+
+.item { display: flex; align-items: center; }
+.item label { flex: 1; min-width: 0; }
+.qty-ctl { display: flex; gap: 6px; padding-right: 10px; flex: none; }
+.qbtn { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); font-size: 20px; line-height: 1; cursor: pointer; padding: 0; }
+.qbtn:disabled { opacity: .35; }
+.item.zero .item-name, .item.zero .item-qty { color: var(--muted); }
+.item.checked .qbtn { opacity: .5; }
+select option:disabled { color: #6f7773; }
