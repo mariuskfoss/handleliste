@@ -78,17 +78,36 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
 .card-meta { color: var(--muted); font-size: 14px; }
 .card-note { font-size: 14px; color: var(--brand); font-style: italic; }
 .footer-tools { margin-top: 28px; text-align: center; }
-/* Forslag fra biblioteket (v0.3) */
-.suggest { margin: 0 0 18px; }
-.suggest-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
+/* Forslag fra biblioteket (v0.3.1): ett kompakt kort, sveip sidelengs, piler som alternativ */
+.suggest { margin: 0 0 16px; overflow: hidden; padding: 2px; margin-left: -2px; margin-right: -2px; }
+.suggest-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 4px; min-height: 36px; }
 .suggest-head h3, .section-title { font-size: 13px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
 .section-title { margin: 0 0 8px; }
-.suggest-card { border-left: 3px solid var(--brand); background: var(--card-2); }
-.suggest-ings {
-  color: var(--muted); font-size: 13px; margin-top: 2px;
+.suggest-nav { display: flex; align-items: center; gap: 0; }
+.nav-arrow {
+  min-width: 40px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none;
+  color: var(--muted); font-size: 26px; line-height: 1; cursor: pointer;
+}
+.nav-arrow:active { background: var(--card-2); color: var(--ink); }
+.nav-arrow:focus-visible, .suggest-card:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.suggest-pos { min-width: 46px; text-align: center; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.suggest-card {
+  flex-direction: row; align-items: center; gap: 10px; min-height: 72px; padding: 8px 10px 8px 12px;
+  border-left: 3px solid var(--brand); background: var(--card-2);
+  touch-action: pan-y; -webkit-user-select: none; user-select: none; transition: transform .18s ease-out, opacity .18s ease-out;
+}
+.suggest-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.suggest-title {
+  font-weight: 650; font-size: 16px; line-height: 1.25;
   overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
 }
-.suggest-card .btn { align-self: flex-start; margin-top: 8px; min-width: 110px; }
+.suggest-meta { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.suggest-card .btn.small { flex: none; min-height: 40px; padding: 0 14px; }
+.suggest-card.from-right { animation: suggest-in-r .18s ease-out; }
+.suggest-card.from-left { animation: suggest-in-l .18s ease-out; }
+@keyframes suggest-in-r { from { transform: translateX(28px); opacity: .3; } to { transform: none; opacity: 1; } }
+@keyframes suggest-in-l { from { transform: translateX(-28px); opacity: .3; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .suggest-card, .suggest-card.from-right, .suggest-card.from-left { animation: none; transition: none; } }
 .back { text-decoration: none; font-weight: 600; white-space: nowrap; }
 
 /* Skjema */
@@ -120,7 +139,7 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .week-nav { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
 .week-title { flex: 1; text-align: center; }
 .week-title h2 { font-size: 19px; }
-.week-title .linkbtn { padding: 2px 0; }
+.week-title .linkbtn { display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; margin: -8px 0 -10px; }
 .summary { text-align: center; color: var(--muted); font-size: 14px; margin: 0 0 10px; }
 .days { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .day {
@@ -136,8 +155,10 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .row-actions { display: flex; gap: 8px; justify-content: space-between; margin-top: 14px; flex-wrap: wrap; }
 
 /* Liste */
-.list-head { align-items: flex-end; }
 .left { font-weight: 700; color: var(--brand); white-space: nowrap; }
+.list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
+.list-foot { display: flex; justify-content: center; margin: 22px 0 4px; }
+.list-foot .btn.small { min-height: 40px; color: var(--muted); font-weight: 600; }
 .list-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .list-actions .btn.primary { flex: 1; }
 .aisle {
@@ -187,13 +208,22 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .tabs a.active { color: var(--brand); }
 .tabs a.active .ico { filter: none; opacity: 1; }
 
+/* v0.3.2: toasten legger seg over fanelinja (ikke over lista), så nederste vare aldri dekkes. */
 .toast {
-  position: fixed; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 12px);
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none;
-  background: #e9ecea; color: #111; padding: 10px 16px; border-radius: 999px; font-size: 14px;
-  transition: opacity .2s, transform .2s; z-index: 20; max-width: 90vw; text-align: center;
+  background: #e9ecea; color: #111; padding: 0 16px; min-height: 48px; max-height: calc(var(--nav-h) - 12px);
+  border-radius: 14px; font-size: 14px; line-height: 1.3; box-shadow: 0 2px 12px rgba(0,0,0,.45);
+  display: flex; align-items: center; gap: 12px; justify-content: center;
+  transition: opacity .2s, transform .2s; z-index: 20; width: max-content; max-width: calc(100vw - 24px); text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.show.has-action { pointer-events: auto; }
+.toast .toast-msg { padding: 6px 0; }
+.toast-act {
+  flex: none; min-height: 40px; padding: 0 14px; margin-right: -8px; border: 0; border-radius: 10px;
+  background: #1f3a2a; color: #d7f5e1; font: inherit; font-weight: 700; cursor: pointer;
+}
 
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 30; display: flex; align-items: flex-end; justify-content: center; }
 .sheet { background: var(--card); width: 100%; max-width: 640px; border-radius: 16px 16px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 10px; }
@@ -209,7 +239,8 @@ a { color: var(--brand); }
 .notice { background: var(--brand-soft); color: var(--ink); border: 1px solid #35533f; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 0 0 10px; }
 .day-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 0; }
 .day-foot .day-meta { margin-top: 6px; }
-.day-foot .linkbtn { padding: 6px 0 0; font-size: 13px; white-space: nowrap; }
+/* v0.3.2: minst 40 px treffflate uten å endre kortet: flata strekker seg nedover (ikke opp over nedtrekksmenyen). */
+.day-foot .linkbtn { display: inline-flex; align-items: flex-start; box-sizing: border-box; min-height: 40px; padding: 6px 0 16px 16px; margin-bottom: -16px; font-size: 13px; line-height: 18px; white-space: nowrap; }
 .day.has-oneoff { border-style: dashed; border-color: #5b7a68; }
 .oneoff { display: flex; flex-direction: column; gap: 2px; }
 .oneoff-name { font-weight: 650; font-size: 17px; }

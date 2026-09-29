@@ -90,7 +90,7 @@
     { id: 'blomkalsuppe', name: 'Blomkålsuppe', minutes: 30, ingredients: [
       ['blomkål', 1, 'stk', FG], ['løk', 1, 'stk', FG], ['poteter', 300, 'g', FG], ['grønnsaksbuljong', 1, 'l', TV],
       ['matfløte', 2, 'dl', KJ], ['bacon', 1, 'pk', KJ], ['brød', 1, 'stk', TV]]},
-    { id: 'soppristotto', name: 'Soppristotto', minutes: 40, ingredients: [
+    { id: 'soppristotto', name: 'Sopprisotto', minutes: 40, ingredients: [
       ['risottoris', 4, 'dl', TV], ['champignon', 400, 'g', FG], ['sjalottløk', 2, 'stk', FG], ['hvitløk', 2, 'fedd', FG],
       ['grønnsaksbuljong', 1, 'l', TV], ['parmesan', 1, 'stk', KJ], ['smør', 2, 'ss', KJ]]},
     { id: 'pasta-pesto-kylling', name: 'Pasta pesto med kylling', minutes: 25, ingredients: [
