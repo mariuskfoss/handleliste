@@ -73,7 +73,9 @@ const hh = (hid, ...rest) => [ctx.db, 'households', hid, ...rest];
 function recipeDoc(r) {
   return {
     name: r.name, minutes: r.minutes == null ? null : r.minutes, note: r.note || '',
-    ingredients: (r.ingredients || []).map(i => ({ name: i.name, qty: i.qty == null ? null : i.qty, unit: i.unit || '', aisle: i.aisle })),
+    // v0.4.3: basis (true/false) bare når ingrediensen er merket annerledes enn standardtabellen.
+    ingredients: (r.ingredients || []).map(i => Object.assign({ name: i.name, qty: i.qty == null ? null : i.qty, unit: i.unit || '', aisle: i.aisle },
+      typeof i.basis === 'boolean' ? { basis: i.basis } : {})),
     updated_at: Date.now()
   };
 }
@@ -191,6 +193,8 @@ const W = {
   },
   setChecks: (hid, week, map) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'lists', week)), { week, checked: map }, { merge: true }),
   incAdjust: (hid, week, key, change) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'lists', week)), { week, adjust: { [key]: ctx.fs.increment(change) } }, { merge: true }),
+  // v0.4.3: basisvalg per uke som felt i adjust-kartet («basis:<vare>» = 1 lagt til / -1 ikke nå), feltvis flettet.
+  setAdjust: (hid, week, map) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'lists', week)), { week, adjust: map }, { merge: true }),
   clearAdjust: (hid, week, key) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'lists', week)), { week, adjust: { [key]: ctx.fs.deleteField() } }, { merge: true }),
   addExtra: (hid, x) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'extras', x.id)), extraDoc(x)),
   deleteExtras: (hid, ids) => {

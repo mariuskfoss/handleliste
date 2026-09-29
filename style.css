@@ -287,3 +287,29 @@ select option:disabled { color: #6f7773; }
 /* v0.4.2 */
 .week-tools .btn.small { min-height: 44px; }
 @media (prefers-reduced-motion: reduce) { .item.moving { transition: none !important; } }
+
+/* v0.4.3: basisvarer */
+.ing-top { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
+.ing-basis { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; color: var(--muted); cursor: pointer; }
+.ing-basis input { width: 20px; height: 20px; margin: 0; accent-color: var(--brand); }
+.basis-box {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 44px; box-sizing: border-box;
+  margin: 0 0 10px; padding: 10px 12px; text-align: left; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--card); color: var(--ink); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.basis-box.todo { border-color: var(--brand); background: var(--brand-soft); }
+.basis-box:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.basis-title { font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+.basis-sub { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.basis-sheet { max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; box-sizing: border-box; }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sheet-head h3 { margin: 0; }
+.basis-sheet .hint { margin: 0; }
+.basis-rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; }
+.basis-rows li + li { border-top: 1px solid var(--line); }
+.basis-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-height: 48px; box-sizing: border-box; padding: 8px 12px; cursor: pointer; }
+.basis-row input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--brand); }
+.basis-name { font-weight: 600; }
+.basis-amt { color: var(--ink); }
+.basis-src { flex-basis: 100%; padding-left: 32px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.basis-actions { display: grid; gap: 8px; }

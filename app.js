@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.2 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Ukeshandel v0.4.3 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -22,7 +22,8 @@
   // og mengden varen hadde da den ble krysset av i checked[vare + QTY_SUFFIX] (tall, ellers false).
   var QTY_SUFFIX = '#mengde';
 
-  var U = window.UkeshandelUnits;                 // enheter og pakninger (units.js)
+  var U = window.UkeshandelUnits;
+  var BASIS_PREFIX = 'basis:';                 // enheter og pakninger (units.js)
   var main = document.getElementById('main');
   var state = null;
   var memoryOnly = false;
@@ -385,7 +386,11 @@
       recipes: function (docs) {
         state.recipes = docs.map(function (d) {
           return { id: d.id, name: d.name, minutes: d.minutes == null ? null : d.minutes, note: d.note || '',
-            ingredients: (d.ingredients || []).map(function (i) { return { name: i.name, qty: i.qty == null ? null : i.qty, unit: i.unit || '', aisle: normAisle(i.aisle) }; }) };
+            ingredients: (d.ingredients || []).map(function (i) {
+              var o = { name: i.name, qty: i.qty == null ? null : i.qty, unit: i.unit || '', aisle: normAisle(i.aisle) };
+              if (typeof i.basis === 'boolean') o.basis = i.basis;   // v0.4.3
+              return o;
+            }) };
         });
         remoteChanged();
       },
@@ -655,6 +660,13 @@
       save();
       remote(function (W, hid) { return change ? W.incAdjust(hid, week, key, change) : null; });
     },
+    // v0.4.3: basisvalg per uke, lagret feltvis i samme lists-dokument som +/- («basis:<vare>» = 1 lagt til, -1 ikke nå).
+    setBasis: function (week, map) {
+      var m = state.list_adjust[week] = state.list_adjust[week] || {}, r = {};
+      Object.keys(map).forEach(function (nn) { m[BASIS_PREFIX + nn] = map[nn]; r[BASIS_PREFIX + nn] = map[nn]; });
+      save();
+      remote(function (W, hid) { return W.setAdjust(hid, week, r); });
+    },
     clearAdjust: function (week, key) {
       if (state.list_adjust[week]) delete state.list_adjust[week][key];
       save();
@@ -727,8 +739,12 @@
 
   function ingredientRow(ing) {
     ing = ing || { name: '', qty: null, unit: 'stk', aisle: 'Tørrvare' };
+    var isB = U.isBasis(ing);
     return '<div class="ing-row" data-new="' + (ing.name ? '0' : '1') + '">' +
-      '<input class="ing-name" type="text" placeholder="Ingrediens" aria-label="Ingrediens" value="' + esc(ing.name) + '" autocomplete="off" list="known-ings">' +
+      '<div class="ing-top"><input class="ing-name" type="text" placeholder="Ingrediens" aria-label="Ingrediens" value="' + esc(ing.name) + '" autocomplete="off" list="known-ings">' +
+      // v0.4.3: basisvare (krydder, mel, olje o.l.) legges ikke rett på lista. Standard fra tabellen, kan endres her.
+      '<label class="ing-basis" title="Basisvare: legges ikke rett på lista, men i basisvare-meldingen på Liste">' +
+      '<input type="checkbox" class="ing-basis-cb"' + (isB ? ' checked' : '') + (typeof ing.basis === 'boolean' ? ' data-touched="1"' : '') + '> Basis</label></div>' +
       '<div class="ing-sub">' +
       '<input class="ing-qty" type="text" inputmode="decimal" placeholder="Mengde" aria-label="Mengde" value="' + esc(formatQty(ing.qty)) + '">' +
       '<select class="ing-unit" aria-label="Enhet">' + unitOptions(ing.unit) + '</select>' +
@@ -749,12 +765,15 @@
     for (var i = 0; i < rows.length; i++) {
       var n = rows[i].querySelector('.ing-name').value.trim();
       if (!n) continue;
-      out.push({
+      var ing = {
         name: n,
         qty: parseQty(rows[i].querySelector('.ing-qty').value),
         unit: rows[i].querySelector('.ing-unit').value,
         aisle: rows[i].querySelector('.ing-aisle').value
-      });
+      };
+      var bcb = rows[i].querySelector('.ing-basis-cb');
+      if (bcb && bcb.checked !== U.isBasisName(n)) ing.basis = bcb.checked;   // lagres bare når det avviker fra tabellen
+      out.push(ing);
     }
     return out;
   }
@@ -1152,13 +1171,38 @@
       if (extraId) it.extra_ids.push(extraId);
     }
     var dinners = 0;
+    // v0.4.3: basisvarer. Et navn er basisvare denne uka når ALLE middagsforekomstene er basis (tabell eller merket i
+    // oppskriften). Da legges middagsmengden bare på lista hvis den er valgt («basis:<vare>» = 1) i basisvare-vinduet.
+    var adjW = state.list_adjust[weekKey] || {};
+    var dinnerIngs = [], occ = {};
     dates.forEach(function (d) {
       var o = state.oneoffs[d];
       var r = o || (state.week_plan[d] ? recipeById(state.week_plan[d]) : null);
       if (!r) return;
       dinners++;
-      r.ingredients.forEach(function (i) { add('dinner', r.name, i.name, i.qty, i.unit, i.aisle); });
+      r.ingredients.forEach(function (i) {
+        var nn = normName(i.name);
+        if (!nn) return;
+        dinnerIngs.push({ r: r, i: i, nn: nn });
+        var c = occ[nn] = occ[nn] || { n: 0, b: 0 };
+        c.n++; if (U.isBasis(i)) c.b++;
+      });
     });
+    var basisMap = {}, basisAdded = {};
+    dinnerIngs.forEach(function (x) {
+      var c = occ[x.nn];
+      if (c.b === c.n) {
+        var b = basisMap[x.nn];
+        if (!b) b = basisMap[x.nn] = { nn: x.nn, name: String(x.i.name).trim(), recipes: [], entries: [], choice: adjW[BASIS_PREFIX + x.nn] || 0 };
+        if (b.recipes.indexOf(x.r.name) < 0) b.recipes.push(x.r.name);
+        b.entries.push({ qty: x.i.qty, unit: x.i.unit });
+        if (b.choice !== 1) return;          // ikke valgt (eller «ikke nå») → ikke på lista
+        basisAdded[x.nn] = true;
+      }
+      add('dinner', x.r.name, x.i.name, x.i.qty, x.i.unit, x.i.aisle);
+    });
+    var basis = Object.keys(basisMap).map(function (nn) { var b = basisMap[nn]; b.amount = basisAmount(nn, b.entries); return b; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name, 'nb'); });
     state.staples.forEach(function (s) {
       if (s.active === false) return;
       add('staple', null, s.name, s.qty, s.unit, s.aisle);
@@ -1199,6 +1243,7 @@
       }
       it.tick = c || false;
       it.checked = !!c && !(typeof c === 'number' && it.qty != null && it.qty > c + 1e-9);
+      it.basisvare = !!basisAdded[it.nn] && it.sources.indexOf('dinner') >= 0;
       return it;
     });
     if (!hh) {
@@ -1214,9 +1259,107 @@
       save();
     }
     currentList = items;
-    return { items: items, dates: dates, dinners: dinners, weekKey: weekKey };
+    return { items: items, dates: dates, dinners: dinners, weekKey: weekKey, basis: basis };
   }
   var currentList = [];
+  // Samlet middagsmengde for en basisvare (til visning i vinduet), f.eks. «1 ss + 2 ts» eller «1 dl».
+  function basisAmount(nn, entries) {
+    var byBase = {}, order = [];
+    entries.forEach(function (e) {
+      if (e.qty == null || !isFinite(e.qty)) return;
+      var u = U.normUnit(e.unit), c = U.conversion(nn, u), base = c ? c.base : u;
+      if (!byBase[base]) { byBase[base] = {}; order.push(base); }
+      byBase[base][u] = round3((byBase[base][u] || 0) + Number(e.qty));
+    });
+    return order.map(function (base) { return U.plan(nn, base, byBase[base], 0).text; }).join(' + ');
+  }
+
+  // v0.4.3: én samlet melding øverst på Liste.
+  function basisBox(bs) {
+    if (!bs || !bs.length) return '';
+    var und = bs.filter(function (b) { return !b.choice; }), added = bs.filter(function (b) { return b.choice === 1; });
+    function names(arr) { var n = arr.map(function (b) { return b.name.charAt(0).toLowerCase() + b.name.slice(1); }); return n.slice(0, 3).join(', ') + (n.length > 3 ? ' …' : ''); }
+    var title, sub, cls;
+    if (und.length === bs.length) {
+      title = bs.length + (bs.length === 1 ? ' basisvare brukes' : ' basisvarer brukes') + ' denne uka: ' + names(bs);
+      sub = 'Trykk for å velge hva som skal på lista'; cls = 'todo';
+    } else if (und.length) {
+      title = und.length + (und.length === 1 ? ' ny basisvare: ' : ' nye basisvarer: ') + names(und);
+      sub = added.length + ' av ' + bs.length + ' lagt til · trykk for å velge'; cls = 'todo';
+    } else {
+      title = 'Basisvarer: ' + (added.length ? added.length + ' av ' + bs.length + ' lagt til' : 'ingen lagt til (' + bs.length + ')');
+      sub = (added.length ? names(added) + ' · ' : '') + 'trykk for å endre'; cls = 'done';
+    }
+    return '<button type="button" class="basis-box ' + cls + '" data-action="basis-open" data-testid="basis" aria-haspopup="dialog">' +
+      '<span class="basis-title">' + esc(title) + '</span><span class="basis-sub">' + esc(sub) + '</span></button>';
+  }
+
+  function openBasisDialog() {
+    var built = buildList(), bs = built.basis;
+    if (!bs.length) return;
+    closeBasisDialog(false);
+    var week = built.weekKey, anyDecided = bs.some(function (b) { return b.choice; });
+    var d = document.createElement('div');
+    d.id = 'basis-dialog';
+    d.className = 'overlay';
+    var rows = bs.map(function (b) {
+      return '<li><label class="basis-row"><input type="checkbox" data-nn="' + esc(b.nn) + '"' + (b.choice === 1 ? ' checked' : '') + '>' +
+        '<span class="basis-name">' + esc(cap(b.name)) + '</span>' + (b.amount ? ' <span class="basis-amt">' + esc(b.amount) + '</span>' : '') +
+        (anyDecided && !b.choice ? ' <span class="badge">ny</span>' : '') +
+        '<span class="basis-src">' + esc(b.recipes.join(', ')) + '</span></label></li>';
+    }).join('');
+    d.innerHTML = '<div class="sheet basis-sheet" role="dialog" aria-modal="true" aria-labelledby="basis-h" aria-describedby="basis-hint" data-week="' + week + '">' +
+      '<div class="sheet-head"><h3 id="basis-h">Basisvarer uke ' + isoWeek(parseIso(week)) + '</h3>' +
+      '<button type="button" class="icon-btn" data-basis="close" aria-label="Lukk">✕</button></div>' +
+      '<p class="hint" id="basis-hint">Brukes i ukas middager. Kryss av det dere må kjøpe – resten legges ikke på lista.</p>' +
+      '<ul class="basis-rows">' + rows + '</ul>' +
+      '<div class="basis-actions"><button type="button" class="btn primary" data-basis="save" data-testid="basis-lagre"></button>' +
+      '<button type="button" class="btn" data-basis="ignore" data-testid="basis-ignorer">Ignorer denne uka</button></div></div>';
+    document.body.appendChild(d);
+    function label() {
+      var n = d.querySelectorAll('.basis-rows input:checked').length;
+      d.querySelector('[data-basis="save"]').textContent = n ? 'Legg ' + n + ' på lista' : 'Lagre – ingen på lista';
+    }
+    label();
+    d.addEventListener('change', label);
+    d.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-basis]');
+      var a = e.target === d ? 'close' : btn ? btn.getAttribute('data-basis') : null;
+      if (!a) return;
+      if (a === 'close') { closeBasisDialog(true); return; }
+      var map = {}, n = 0;
+      [].forEach.call(d.querySelectorAll('.basis-rows input'), function (cb) {
+        var on = a === 'save' && cb.checked;
+        map[cb.getAttribute('data-nn')] = on ? 1 : -1;
+        if (on) n++;
+      });
+      ops.setBasis(week, map);
+      closeBasisDialog(true);
+      flipRender();
+      toast(a === 'ignore' ? 'Basisvarer ignorert for uke ' + isoWeek(parseIso(week))
+        : n ? n + (n === 1 ? ' basisvare' : ' basisvarer') + ' lagt på lista' : 'Ingen basisvarer lagt på lista');
+    });
+    d.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); closeBasisDialog(true); return; }
+      if (e.key !== 'Tab') return;
+      var f = [].filter.call(d.querySelectorAll('button, input'), function (x) { return !x.disabled && x.offsetParent !== null; });
+      if (!f.length) return;
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
+    var firstCb = d.querySelector('.basis-rows input');
+    if (firstCb) firstCb.focus();
+  }
+  function closeBasisDialog(restoreFocus) {
+    var d = document.getElementById('basis-dialog');
+    if (!d) return;
+    d.parentNode.removeChild(d);
+    if (restoreFocus) {
+      var b = main.querySelector('[data-action="basis-open"]');
+      if (b) try { b.focus({ preventScroll: true }); } catch (e) { b.focus(); }
+    }
+  }
 
   function matchesFilter(it, f) {
     if (f === 'middag') return it.sources.indexOf('dinner') >= 0;
@@ -1293,6 +1436,7 @@
       return '<button type="button" data-action="filter" data-filter="' + x[0] + '" aria-pressed="' + (f === x[0]) + '"' +
         (f === x[0] ? ' class="on"' : '') + '>' + x[1] + '</button>';
     }).join('') + '</div>';
+    h = h.replace('<div class="seg"', basisBox(built.basis) + '<div class="seg"');
     if (!built.items.length) {
       h += '<p class="empty">Lista er tom. Velg middager under <a href="#uke">Uke</a>, eller legg til varer.</p>' + addItemForm();
       el.innerHTML = h;
@@ -1310,6 +1454,7 @@
         // Trengs mer enn det som ble krysset av: egen linje som brytes og aldri kuttes (v0.4.2).
         var note = !i.checked && typeof i.tick === 'number' ? U.sizeText(i.tick, i.unit) + ' krysset av' : '';
         if (i.recipes.length) src.push(i.recipes.join(', '));
+        if (i.basisvare) src.push('basisvare');
         if (i.sources.indexOf('staple') >= 0) src.push('fast vare');
         if (i.sources.indexOf('extra') >= 0) src.push('lagt til');
         if (i.adjust && i.plan) src.push('justert ' + i.plan.adjText(i.adjust));
@@ -1564,6 +1709,8 @@
       copyText(text);
     } else if (a === 'uncheck-all') {
       uncheckAll();
+    } else if (a === 'basis-open') {
+      openBasisDialog();
     } else if (a === 'filter') {
       ui.filter = btn.getAttribute('data-filter');
       renderListSection();
@@ -1610,8 +1757,15 @@
       ops.setChecks(week, m);
       // v0.4.2: avkrysset vare glir ned nederst i avdelingen (ukrysset glir opp igjen).
       flipRender(reorderInPlace);
+    } else if (t.classList.contains('ing-basis-cb')) {
+      t.setAttribute('data-touched', '1');
     } else if (t.classList.contains('ing-name') || t.id === 'ai-name') {
       var row = t.classList.contains('ing-name') ? t.closest('.ing-row') : null;
+      var bcb = row && row.querySelector('.ing-basis-cb');
+      if (bcb && !bcb.hasAttribute('data-touched')) {
+        var kb = knownIngredient(t.value, false);
+        bcb.checked = kb && typeof kb.basis === 'boolean' ? kb.basis : U.isBasisName(t.value);
+      }
       if (row && row.getAttribute('data-new') !== '1') return;
       var k = knownIngredient(t.value, !row);
       if (k) {
@@ -1692,6 +1846,7 @@
   });
 
   window.addEventListener('hashchange', function () {
+    closeBasisDialog(false);
     ui.error = '';
     if (!/^#husstand/.test(location.hash)) ui.justCreated = false;
     route(); window.scrollTo(0, 0);

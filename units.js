@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.2 — enheter og pakninger på handlelista (v0.4.1, enhetsnormalisering v0.4.2).
+/* Ukeshandel v0.4.3 — enheter og pakninger på handlelista (v0.4.1, enhetsnormalisering v0.4.2, basisvarer v0.4.3).
  * Rene funksjoner (ingen DOM), lastes før app.js og kan testes i Node.
  *
  * Regler:
@@ -38,6 +38,28 @@
   ];
   // Buljong: skjeer er konsentrat/pulver, liter er ferdig buljong. Samme linje, men delene vises hver for seg.
   var SEPARATE_SPOONS = /(buljong|kraft)$/;
+
+  // v0.4.3: basisvarer (spec v0.4 punkt 3: krydder, mel, olje o.l.) – ting man vanligvis har i skapet.
+  // Middagsingredienser med disse navnene legges ikke rett på lista; de samles i én melding øverst på Liste.
+  // Treff på hele navnet, uten hensyn til store/små bokstaver og mellomrom. En ingrediens kan merkes av/på i
+  // oppskriften (basis: true/false), det overstyrer tabellen.
+  var BASIS_TABLE = {
+    krydder: ['salt', 'havsalt', 'flaksalt', 'pepper', 'sort pepper', 'kvernet pepper', 'hel sort pepper', 'hvit pepper',
+      'karri', 'karripulver', 'paprikapulver', 'røkt paprikapulver', 'chilipulver', 'chiliflak', 'kajennepepper', 'kanel',
+      'spisskummen', 'timian', 'oregano', 'tørket basilikum', 'tørket timian', 'tørket oregano', 'rosmarin', 'laurbærblad',
+      'muskat', 'muskatnøtt', 'nellik', 'kardemomme', 'ingefærpulver', 'hvitløkspulver', 'løkpulver', 'allehånde',
+      'gurkemeie', 'malt koriander', 'garam masala', 'sesamfrø'],
+    mel: ['hvetemel', 'byggmel', 'rugmel', 'grovt mel', 'sammalt hvete', 'potetmel', 'maismel', 'maisenna', 'griljermel',
+      'strømel', 'bakepulver', 'natron', 'tørrgjær', 'sukker', 'brunt sukker', 'melis', 'vaniljesukker'],
+    olje: ['olje', 'matolje', 'olivenolje', 'rapsolje', 'solsikkeolje', 'nøytral olje', 'sesamolje', 'eddik',
+      'balsamicoeddik', 'soyasaus', 'fiskesaus', 'østerssaus']
+  };
+  var BASIS = {};
+  Object.keys(BASIS_TABLE).forEach(function (g) { BASIS_TABLE[g].forEach(function (n) { BASIS[n] = g; }); });
+  function basisKey(name) { return String(name || '').replace(/[\u200B-\u200D\uFEFF]/g, '').trim().toLowerCase().replace(/\s+/g, ' '); }
+  function isBasisName(name) { return BASIS.hasOwnProperty(basisKey(name)); }
+  // Gjelder denne ingrediensen som basisvare? Eget merke i oppskriften vinner over tabellen.
+  function isBasis(ing) { return ing && typeof ing.basis === 'boolean' ? ing.basis : isBasisName(ing && ing.name); }
 
   var PACKS = {};
   PACK_TABLE.forEach(function (e) { e.names.forEach(function (n) { PACKS[n] = e; }); });
@@ -195,7 +217,7 @@
   }
 
   root.UkeshandelUnits = {
-    UNIT: UNIT, PACK_TABLE: PACK_TABLE, packFor: packFor, normUnit: normUnit, conversion: conversion, keyFor: keyFor,
+    UNIT: UNIT, PACK_TABLE: PACK_TABLE, BASIS_TABLE: BASIS_TABLE, isBasisName: isBasisName, isBasis: isBasis, packFor: packFor, normUnit: normUnit, conversion: conversion, keyFor: keyFor,
     factorFor: factorFor, packCombo: packCombo, plan: plan, spoonText: spoonText, sizeText: sizeText
   };
 })(typeof window !== 'undefined' ? window : globalThis);
