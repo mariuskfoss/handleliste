@@ -21,7 +21,7 @@
   var state = null;
   var memoryOnly = false;
   var hadLocalData = false;
-  var ui = { weekOffset: 0, staplesOpen: false, addOpen: false, filter: 'alle', notice: '', justCreated: false, busy: false, error: '' };
+  var ui = { suggest: null, weekOffset: 0, staplesOpen: false, addOpen: false, filter: 'alle', notice: '', justCreated: false, busy: false, error: '' };
   var Sync = window.UkeshandelSync || null;
   var hh = null;             // husstandsinfo når vi er i husstandsmodus
   var syncReady = null;      // promise: SDK lastet, innlogget, medlemskap sjekket
@@ -686,11 +686,88 @@
 
   /* ---------- Retter ---------- */
 
+  /* ---------- Bakgrunnsbibliotek (v0.3) ---------- */
+
+  var LIBRARY = window.UKESHANDEL_LIBRARY || [];
+  var SUGGEST_COUNT = 2;
+  function libById(id) {
+    for (var i = 0; i < LIBRARY.length; i++) if (LIBRARY[i].id === id) return LIBRARY[i];
+    return null;
+  }
+  // Bibliotekretter som ikke allerede er blant våre retter (samme id «lib-<id>» eller samme navn).
+  function libCandidates() {
+    var names = {};
+    state.recipes.forEach(function (r) { names[normName(r.name)] = true; });
+    return LIBRARY.filter(function (x) { return !recipeById('lib-' + x.id) && !names[normName(x.name)]; })
+      .map(function (x) { return x.id; });
+  }
+  function pickRandom(pool, n) {
+    var a = pool.slice(), out = [];
+    while (a.length && out.length < n) out.push(a.splice(Math.floor(Math.random() * a.length), 1)[0]);
+    return out;
+  }
+  // Behold forslagene som fortsatt passer; fyll på tilfeldig. Ved «Nytt forslag»: velg blant de som ikke vises nå.
+  function refreshSuggestions(reroll) {
+    var cands = libCandidates();
+    var shown = (ui.suggest || []).filter(function (id) { return cands.indexOf(id) >= 0; });
+    if (reroll) {
+      var fresh = cands.filter(function (id) { return shown.indexOf(id) < 0; });
+      var next = pickRandom(fresh, SUGGEST_COUNT);
+      if (next.length < SUGGEST_COUNT) next = next.concat(pickRandom(shown, SUGGEST_COUNT - next.length));
+      ui.suggest = next;
+    } else {
+      ui.suggest = shown.slice(0, SUGGEST_COUNT).concat(pickRandom(cands.filter(function (id) { return shown.indexOf(id) < 0; }), SUGGEST_COUNT - Math.min(shown.length, SUGGEST_COUNT)));
+    }
+    return cands.length;
+  }
+  function renderSuggestions() {
+    if (!LIBRARY.length) return '';
+    var left = refreshSuggestions(false);
+    var h = '<section class="suggest" data-testid="forslag" aria-label="Forslag fra biblioteket">';
+    h += '<div class="suggest-head"><h3>Forslag til nye retter</h3>' +
+      (left > ui.suggest.length ? '<button type="button" class="btn small" data-action="lib-reroll" data-testid="nytt-forslag">Nytt forslag</button>' : '') + '</div>';
+    if (!ui.suggest.length) {
+      h += '<p class="hint" data-testid="forslag-tomt">Dere har alle ' + LIBRARY.length + ' rettene fra biblioteket.</p>';
+    } else {
+      h += '<ul class="cards">';
+      ui.suggest.forEach(function (id) {
+        var x = libById(id);
+        var meta = [];
+        if (x.minutes) meta.push(x.minutes + ' min');
+        meta.push(x.ingredients.length + ' ingredienser');
+        h += '<li class="card suggest-card" data-lib-id="' + esc(x.id) + '">' +
+          '<span class="card-title">' + esc(x.name) + '</span>' +
+          '<span class="card-meta">' + esc(meta.join(' · ')) + '</span>' +
+          (x.note ? '<span class="card-note">' + esc(x.note) + '</span>' : '') +
+          '<span class="suggest-ings">' + esc(cap(x.ingredients.map(function (i) { return i.name; }).join(', '))) + '</span>' +
+          '<button type="button" class="btn small primary" data-action="lib-add" data-lib-id="' + esc(x.id) + '" data-testid="legg-til">Legg til</button>' +
+          '</li>';
+      });
+      h += '</ul>';
+    }
+    h += '</section>';
+    return h;
+  }
+  function addFromLibrary(id) {
+    var x = libById(id);
+    if (!x) return;
+    if (recipeById('lib-' + id) || libCandidates().indexOf(id) < 0) { toast('«' + x.name + '» finnes allerede i rettene'); renderRetter(); return; }
+    ops.saveRecipe({
+      id: 'lib-' + x.id, name: x.name, minutes: x.minutes || null, note: x.note || '',
+      ingredients: x.ingredients.map(function (i) { return { name: i.name, qty: i.qty, unit: i.unit, aisle: normAisle(i.aisle) }; })
+    }, true);
+    ui.suggest = (ui.suggest || []).filter(function (s) { return s !== id; });
+    toast('«' + x.name + '» er lagt til i rettene');
+    renderRetter();
+  }
+
   function renderRetter() {
     var rs = sortedRecipes();
     var h = '<section class="page" data-page="retter">';
     h += '<div class="page-head"><h2>Retter <span class="count">' + rs.length + '</span></h2>' +
       '<a class="btn primary" href="#retter/ny" data-testid="ny-rett">+ Ny rett</a></div>';
+    h += renderSuggestions();
+    if (rs.length) h += '<h3 class="section-title">Våre retter</h3>';
     if (!rs.length) h += '<p class="empty">Ingen retter ennå. Legg til rettene dere faktisk lager.</p>';
     h += '<ul class="cards">';
     rs.forEach(function (r) {
@@ -1194,6 +1271,8 @@
     else if (a === 'week-now') { ui.weekOffset = 0; renderUke(); }
     else if (a === 'fill-weekdays') { fillWeekdays(); }
     else if (a === 'remove-oneoff') { removeOneoff(btn.getAttribute('data-date')); }
+    else if (a === 'lib-add') { addFromLibrary(btn.getAttribute('data-lib-id')); }
+    else if (a === 'lib-reroll') { refreshSuggestions(true); renderRetter(); }
     else if (a === 'clear-week') {
       // Alle sju dagene settes til tom (også engangsmiddager). Handlelistas egne varer, faste varer, avkrysning og +/- røres ikke.
       var wk = weekDates(ui.weekOffset);
