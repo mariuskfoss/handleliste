@@ -1,4 +1,4 @@
-/* Ukeshandel v0.3.2 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Ukeshandel v0.4.1 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -12,7 +12,7 @@
   var SCHEMA = 3;         // intern skjemaversjon for lokale data (migreres ved lasting)
   var AISLES = ['Frukt/grønt', 'Kjøl', 'Frys', 'Tørrvare', 'Hus'];
   var AISLE_LABELS = { 'Hus': 'Husholdning' };
-  var UNITS = ['stk', 'g', 'kg', 'dl', 'l', 'ss', 'ts', 'pk', 'boks', 'glass', 'beger', 'flaske', 'fedd', 'bunt'];
+  var UNITS = ['stk', 'g', 'kg', 'ml', 'dl', 'l', 'ss', 'ts', 'pk', 'boks', 'glass', 'beger', 'flaske', 'fedd', 'bunt'];
   var DAY_NAMES = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
   var DAY_SHORT = ['man', 'tir', 'ons', 'tor', 'fre', 'lør', 'søn'];
   var FILTERS = [['alle', 'Alle'], ['middag', 'Middag'], ['faste', 'Faste varer']];
@@ -22,6 +22,7 @@
   // og mengden varen hadde da den ble krysset av i checked[vare + QTY_SUFFIX] (tall, ellers false).
   var QTY_SUFFIX = '#mengde';
 
+  var U = window.UkeshandelUnits;                 // enheter og pakninger (units.js)
   var main = document.getElementById('main');
   var state = null;
   var memoryOnly = false;
@@ -68,14 +69,6 @@
     if (q == null || !isFinite(q)) return '';
     var r = Math.round(q * 100) / 100;
     return String(r).replace('.', ',');
-  }
-  function qtyUnit(q, unit) {
-    var f = formatQty(q);
-    if (!f) return '';
-    return unit ? f + ' ' + unit : f;
-  }
-  function stepFor(unit) {
-    return { g: 100, kg: 0.5, l: 0.5 }[unit] || 1;
   }
   function pad(n) { return n < 10 ? '0' + n : '' + n; }
   function isoDate(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
@@ -1133,18 +1126,22 @@
     var map = {};
     var order = [];
     var RANK = { dinner: 0, staple: 1, extra: 2 };
+    // v0.4.1: samme vare i omregnbare enheter (dl/l/ml/ss/ts, g/kg, + pakningstabellen) blir én linje.
     function add(src, from, name, qty, unit, aisle, extraId) {
       var nn = normName(name);
       if (!nn) return;
       unit = unit || '';
-      var key = nn + '|' + unit;
+      var conv = U.conversion(nn, unit);
+      var base = conv ? conv.base : unit;
+      var key = nn + '|' + base;
       var it = map[key];
       if (!it) {
-        it = map[key] = { key: key, name: String(name).trim(), qty: null, unit: unit,
+        it = map[key] = { key: key, nn: nn, name: String(name).trim(), qty: null, unit: base, parts: {}, units: [],
           aisle: normAisle(aisle), checked: false, source: src, sources: [], recipes: [], extra_ids: [] };
         order.push(key);
       }
-      if (qty != null && isFinite(qty)) it.qty = round3((it.qty || 0) + Number(qty));
+      if (it.units.indexOf(unit) < 0) it.units.push(unit);
+      if (qty != null && isFinite(qty)) it.parts[unit] = round3((it.parts[unit] || 0) + Number(qty));
       if (it.sources.indexOf(src) < 0) it.sources.push(src);
       if (RANK[src] < RANK[it.source]) it.source = src;
       if (from && it.recipes.indexOf(from) < 0) it.recipes.push(from);
@@ -1170,12 +1167,32 @@
     var items = order.map(function (k) {
       var it = map[k];
       it.week = weekKey;
-      it.base_qty = it.qty;
-      it.adjust = adj[k] || 0;
-      if (it.adjust) it.qty = Math.max(0, round3((it.base_qty || 0) + it.adjust));
-      // Avkrysning lagrer mengden varen hadde (tall) eller true (uten mengde / eldre versjoner).
-      // Trengs det mer nå enn da den ble krysset av, vises den som ukrysset igjen.
+      // Nøkler fra før v0.4.1 (navn|enhet per enhet), f.eks. «melk|dl» som nå er en del av «melk|ml».
+      var srcKeys = it.units.map(function (u) { return { k: it.nn + '|' + u, f: U.factorFor(it.nn, u) }; });
+      it.legacyKeys = srcKeys.filter(function (x) { return x.k !== k; });
+      var legacyAdj = 0;
+      it.legacyKeys.forEach(function (x) { if (adj[x.k]) legacyAdj += adj[x.k] * x.f; });
+      it.adjust_own = adj[k] || 0;
+      it.adjust_legacy = round3(legacyAdj);
+      it.adjust = round3(it.adjust_own + it.adjust_legacy);
+      var hasQty = Object.keys(it.parts).length > 0;
+      it.base_qty = null;
+      it.plan = null;
+      if (hasQty || it.adjust) {
+        it.plan = U.plan(it.nn, it.unit, it.parts, it.adjust);
+        it.base_qty = U.plan(it.nn, it.unit, it.parts, 0).need;
+        it.qty = it.plan.need;           // behovet (grunnenhet)
+        it.buy = it.plan.buy;            // det som kjøpes (hele pakninger / rundet opp)
+      }
+      // Avkrysning lagrer mengden som ble kjøpt (tall, grunnenhet) eller true (uten mengde / eldre versjoner).
+      // Blir BEHOVET større enn det som ble krysset av, vises varen som ukrysset igjen. Økning innenfor samme
+      // pakning (7 dl → 9 dl når 1 l er krysset av) lar avkrysningen stå.
       var c = checks[k];
+      if (!c && it.legacyKeys.length && !srcKeys.some(function (x) { return x.k === k; }) &&
+          it.legacyKeys.every(function (x) { return checks[x.k]; })) {
+        c = it.legacyKeys.some(function (x) { return checks[x.k] === true; }) ? true
+          : round3(it.legacyKeys.reduce(function (a, x) { return a + checks[x.k] * x.f; }, 0));
+      }
       it.tick = c || false;
       it.checked = !!c && !(typeof c === 'number' && it.qty != null && it.qty > c + 1e-9);
       return it;
@@ -1231,8 +1248,8 @@
       lines.push('');
       lines.push(aisleLabel(g.aisle));
       open.forEach(function (i) {
-        var qu = qtyUnit(i.qty, i.unit);
-        lines.push('- ' + cap(i.name) + (qu ? ', ' + qu : ''));
+        var qu = i.plan ? i.plan.text : '';
+        lines.push('- ' + cap(i.name) + (qu ? ', ' + qu : '') + (i.plan && i.plan.showNeed ? ' (behov ' + i.plan.needText + ')' : ''));
       });
     });
     return any ? lines.join('\n') + '\n' : '';
@@ -1284,12 +1301,13 @@
       h += '<h3 class="aisle">' + esc(aisleLabel(g.aisle)) + '</h3><ul class="items">';
       g.items.forEach(function (i) {
         var src = [];
+        if (i.plan && i.plan.showNeed) src.push('behov ' + i.plan.needText);
+        if (!i.checked && typeof i.tick === 'number') src.push(U.sizeText(i.tick, i.unit) + ' krysset av');   // trengs mer nå (vises tidlig, lina kuttes)
         if (i.recipes.length) src.push(i.recipes.join(', '));
         if (i.sources.indexOf('staple') >= 0) src.push('fast vare');
         if (i.sources.indexOf('extra') >= 0) src.push('lagt til');
-        if (i.adjust) src.push('justert ' + (i.adjust > 0 ? '+' : '−') + formatQty(Math.abs(i.adjust)));
-        if (!i.checked && typeof i.tick === 'number') src.push(qtyUnit(i.tick, i.unit) + ' krysset av');   // trengs mer nå
-        var qu = qtyUnit(i.qty, i.unit);
+        if (i.adjust && i.plan) src.push('justert ' + i.plan.adjText(i.adjust));
+        var qu = i.plan ? i.plan.text : '';
         var pureExtra = i.sources.length === 1 && i.sources[0] === 'extra';
         h += '<li class="item' + (i.checked ? ' checked' : '') + (i.qty === 0 ? ' zero' : '') + ' src-' + i.source + '" data-key="' + esc(i.key) + '">' +
           '<label><input type="checkbox" data-key="' + esc(i.key) + '"' + (i.checked ? ' checked' : '') + '>' +
@@ -1309,7 +1327,8 @@
     el.innerHTML = h;
   }
 
-  function tickValue(it) { return it.qty != null && it.qty > 0 ? it.qty : true; }
+  // Lagrer det som kjøpes (hele pakninger), så en økning innenfor samme pakning ikke fjerner avkrysningen.
+  function tickValue(it) { return it.buy != null && it.buy > 0 ? it.buy : true; }
 
   function uncheckAll() {
     var wk = weekDates(ui.weekOffset)[0];
@@ -1333,14 +1352,17 @@
   function adjustItem(key, dir) {
     var it = currentItems().filter(function (i) { return i.key === key; })[0];
     if (!it) return;
-    var step = stepFor(it.unit);
-    var cur = it.qty == null ? 0 : it.qty;
+    // +/- tar utgangspunkt i det som kjøpes: én pakning mer/mindre for kjente varer (7 dl melk → 1 l → «+» → 2 × 1 l),
+    // ellers ett steg i visningsenheten (100 g, 0,5 kg, 1 dl, 0,5 l, 1 ss, 1 stk …).
+    var pl = it.plan;
+    var step = pl ? pl.step : 1;
+    var cur = pl ? pl.buy : 0;
     var next = dir > 0 ? cur + step : Math.max(0, cur - step);
     // Runder til nærmeste steg når vi går fra et «skjevt» tall (f.eks. 0,5 dl -> 1 dl).
     var ratio = round3(cur / step);
-    if (ratio !== Math.round(ratio)) next = round3((dir > 0 ? Math.ceil(ratio) : Math.floor(ratio)) * step);
-    var delta = round3(next - (it.base_qty || 0));
-    ops.adjust(it.week, key, delta, round3(delta - (it.adjust || 0)));
+    if (!(pl && pl.packs) && ratio !== Math.round(ratio)) next = round3((dir > 0 ? Math.ceil(ratio) : Math.floor(ratio)) * step);
+    var own = round3(next - (it.base_qty || 0) - (it.adjust_legacy || 0));
+    ops.adjust(it.week, key, own, round3(own - (it.adjust_own || 0)));
     renderListSection();
   }
 
@@ -1492,7 +1514,12 @@
       var cur = currentItems();
       var week = cur.length ? cur[0].week : weekDates(ui.weekOffset)[0];
       var m = {};
-      cur.forEach(function (i) { if (i.key === key) { i.checked = t.checked; i.tick = m[key] = t.checked ? tickValue(i) : false; } });
+      var wchecks = state.checks[week] || {};
+      cur.forEach(function (i) {
+        if (i.key !== key) return;
+        i.checked = t.checked; i.tick = m[key] = t.checked ? tickValue(i) : false;
+        (i.legacyKeys || []).forEach(function (x) { if (wchecks[x.k]) m[x.k] = false; });   // gamle nøkler ryddes
+      });
       if (!m.hasOwnProperty(key)) m[key] = t.checked;
       ops.setChecks(week, m);
       t.closest('.item').classList.toggle('checked', t.checked);
@@ -1563,7 +1590,7 @@
         msg = 'Lagt til i lista for uke ' + isoWeek(parseIso(wkDates[0]));
       }
       // Den nye varen skal alltid synes: skjuler filteret den, byttes det til Alle.
-      var newKey = normName(name) + '|' + (item.unit || '');
+      var newKey = U.keyFor(normName(name), item.unit || '');
       var added = buildList().items.filter(function (i) { return i.key === newKey; })[0];
       if (added && !matchesFilter(added, ui.filter)) { ui.filter = 'alle'; msg += ' – viser Alle'; }
       toast(msg);
