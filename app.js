@@ -827,7 +827,7 @@
     });
     h += '</ol>';
     h += '<div class="row-actions"><a class="btn primary" href="#liste">Til handlelista →</a>' +
-      (count ? '<button type="button" class="btn" data-action="clear-week">Tøm uka</button>' : '') + '</div>';
+      (count ? '<button type="button" class="btn" data-action="clear-week" data-testid="tom-uka">Tøm uka</button>' : '') + '</div>';
     h += '</section>';
     main.innerHTML = h;
   }
@@ -1195,9 +1195,14 @@
     else if (a === 'fill-weekdays') { fillWeekdays(); }
     else if (a === 'remove-oneoff') { removeOneoff(btn.getAttribute('data-date')); }
     else if (a === 'clear-week') {
-      if (!window.confirm('Tømme alle kvelder denne uka?')) return;
-      ops.setDays(weekDates(ui.weekOffset).filter(function (d) { return state.week_plan[d] || state.oneoffs[d]; })
-        .map(function (d) { return { date: d, recipe_id: null, oneoff: null }; }));
+      // Alle sju dagene settes til tom (også engangsmiddager). Handlelistas egne varer, faste varer, avkrysning og +/- røres ikke.
+      var wk = weekDates(ui.weekOffset);
+      var wn = isoWeek(parseIso(wk[0]));
+      if (!window.confirm(hh
+        ? 'Tømme alle kvelder i uke ' + wn + ', også engangsmiddager? Dette gjelder hele husstanden. Varer lagt til selv og faste varer blir stående.'
+        : 'Tømme alle kvelder i uke ' + wn + ', også engangsmiddager? Varer lagt til selv og faste varer blir stående.')) return;
+      ops.setDays(wk.map(function (d) { return { date: d, recipe_id: null, oneoff: null }; }));
+      toast('Uke ' + wn + ' er tømt');
       renderUke();
     } else if (a === 'copy-text') {
       var text = listAsText();
