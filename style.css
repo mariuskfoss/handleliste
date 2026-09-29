@@ -326,3 +326,6 @@ select option:disabled { color: #6f7773; }
 .src-head { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
 .src-empty { margin: 0 2px; font-size: 13px; color: var(--muted); }
 .staple-row:not(.add) { grid-template-columns: 1fr 52px 64px 44px; grid-template-areas: "n q u d" "s s s s"; }
+
+/* v0.4.3c: liten overskrift over sorteringsvelgeren (Matrett / Plassering) */
+.sort-h { font-size: 13px; font-weight: 600; letter-spacing: .3px; color: var(--muted); margin: 2px 2px 4px; }

@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.3b — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Ukeshandel v0.4.3c — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -16,7 +16,10 @@
   var DAY_NAMES = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
   var DAY_SHORT = ['man', 'tir', 'ons', 'tor', 'fre', 'lør', 'søn'];
   // v0.4.3b: filtervelgeren (Alle / Middag / Faste varer) er fjernet og erstattet av sorteringsvelgeren.
-  var SORTS = [['butikk', 'Butikk', 'Sorter etter avdeling i butikken'], ['kilde', 'Kilde', 'Sorter etter rett']];
+  // v0.4.3c: vises som «Matrett / Plassering» (i den rekkefølgen). De interne verdiene og localStorage-nøkkelen er de
+  // samme som i v0.4.3b ('kilde' = Matrett, 'butikk' = Plassering), så lagrede valg beholdes uten migrering.
+  // Standard er fortsatt 'butikk' (Plassering), som før.
+  var SORTS = [['kilde', 'Matrett', 'Sorter etter matrett'], ['butikk', 'Plassering', 'Sorter etter plassering i butikken']];
   var SORT_KEY = 'ukeshandel:sort';               // 'butikk' | 'kilde' – huskes per telefon, synkes ikke
   var FAST_PREFIX = 'fast:';                      // v0.4.3b: adjust["fast:<fast vare-id>"] = 1 på lista / -1 ikke
   // v0.4.3b: faste varer er med bare når de er valgt for uka. Uker FØR denne datoen (til og med uke 40 2026, uka
@@ -1514,7 +1517,7 @@
   function listAsText() {
     var built = buildList();
     var kilde = ui.sort === 'kilde';
-    var lines = ['Handleliste – ' + weekLabel(built.dates) + (kilde ? ' (etter rett)' : '')];
+    var lines = ['Handleliste – ' + weekLabel(built.dates) + (kilde ? ' (etter matrett)' : '')];
     var any = false;
     if (kilde) {
       // Som på skjermen: per rett med rettens egen mengde, bare ukryssede.
@@ -1619,8 +1622,9 @@
     h += '<div class="list-head"><span class="sub" data-testid="middager">Handleliste · ' + built.dinners + ' middag' + (built.dinners === 1 ? '' : 'er') + '</span>' +
       '<span class="left" data-testid="igjen">' + left + ' igjen</span></div>';
     h += basisBox(built.basis);
-    // v0.4.3b: sorteringsvelgeren står der filtervelgeren sto.
-    h += '<div class="seg sort" role="group" aria-label="Sortering" data-testid="sortering">' + SORTS.map(function (x) {
+    // v0.4.3b: sorteringsvelgeren står der filtervelgeren sto. v0.4.3c: liten overskrift «Sortering» over den.
+    h += '<div class="sort-h" id="sort-h">Sortering</div>';
+    h += '<div class="seg sort" role="group" aria-labelledby="sort-h" data-testid="sortering">' + SORTS.map(function (x) {
       var on = ui.sort === x[0];
       return '<button type="button" data-action="sort" data-sort="' + x[0] + '" aria-pressed="' + on + '" title="' + x[2] + '"' +
         (on ? ' class="on"' : '') + '>' + x[1] + '</button>';
@@ -1889,7 +1893,7 @@
     } else if (a === 'fast-open') {
       openFastDialog();
     } else if (a === 'sort') {
-      // v0.4.3b: Butikk / Kilde, huskes per telefon (localStorage), synkes ikke.
+      // v0.4.3b/c: Matrett ('kilde') / Plassering ('butikk'), huskes per telefon (localStorage), synkes ikke.
       ui.sort = btn.getAttribute('data-sort') === 'kilde' ? 'kilde' : 'butikk';
       lsSet(SORT_KEY, ui.sort);
       renderListSection();
