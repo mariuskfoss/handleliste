@@ -1,10 +1,15 @@
-/* Ukeshandel v0.1 — ukeplan for middager + handleliste. Ren JS, lagring i localStorage. */
+/* Ukeshandel v0.2 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+ * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
+ */
 (function () {
   'use strict';
 
   var STORAGE_KEY = 'ukeshandel:v1';
+  var HH_KEY = 'ukeshandel:household';            // { hid, secret, core_done, migrated }
+  var ONBOARD_KEY = 'ukeshandel:onboarding';      // 'dismissed'
+  var MIRROR_PREFIX = 'ukeshandel:hh-mirror:';    // siste kjente husstandsdata (rask oppstart)
   var DATA_VERSION = 1;   // holdes på 1 så eldre app-versjoner ikke nullstiller data
-  var SCHEMA = 2;         // intern skjemaversjon (migreres ved lasting)
+  var SCHEMA = 3;         // intern skjemaversjon for lokale data (migreres ved lasting)
   var AISLES = ['Frukt/grønt', 'Kjøl', 'Frys', 'Tørrvare', 'Hus'];
   var AISLE_LABELS = { 'Hus': 'Husholdning' };
   var UNITS = ['stk', 'g', 'kg', 'dl', 'l', 'ss', 'ts', 'pk', 'boks', 'glass', 'beger', 'flaske', 'fedd', 'bunt'];
@@ -15,7 +20,12 @@
   var main = document.getElementById('main');
   var state = null;
   var memoryOnly = false;
-  var ui = { weekOffset: 0, staplesOpen: false, addOpen: false, filter: 'alle', notice: '' };
+  var hadLocalData = false;
+  var ui = { weekOffset: 0, staplesOpen: false, addOpen: false, filter: 'alle', notice: '', justCreated: false, busy: false, error: '' };
+  var Sync = window.UkeshandelSync || null;
+  var hh = null;             // husstandsinfo når vi er i husstandsmodus
+  var syncReady = null;      // promise: SDK lastet, innlogget, medlemskap sjekket
+  var syncStatus = { pending: false, fromCache: true, failed: false };
 
   /* ---------- Hjelpere ---------- */
 
@@ -102,6 +112,8 @@
   }
   function aisleOptions(selected) { return optionList(AISLES, selected, null, AISLE_LABELS); }
   function unitOptions(selected) { return optionList(UNITS, selected, '–'); }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
 
   var toastTimer = null;
   function toast(msg, ms) {
@@ -112,7 +124,7 @@
     toastTimer = setTimeout(function () { t.classList.remove('show'); }, ms || 2500);
   }
 
-  /* ---------- Lagring og migrering ---------- */
+  /* ---------- Lokal lagring og migrering ---------- */
 
   function freshState() {
     var seed = window.UKESHANDEL_SEED();
@@ -124,20 +136,24 @@
       week_plan: {},        // 'YYYY-MM-DD' -> recipe_id | null (tom)
       oneoffs: {},          // 'YYYY-MM-DD' -> engangsmiddag { id, name, ingredients[] }
       staples: seed.staples,
-      list_items: [],       // genererte handlelister (week = mandag), med avkrysning
+      checks: {},           // week -> { varenøkkel: true }
+      list_items: [],       // generert handleliste (week = mandag), beholdt for eldre versjoner
       list_adjust: {},      // week -> { varenøkkel -> endring i mengde (+/-) }
       list_extras: []       // engangsvarer lagt til i lista { id, week, name, qty, unit, aisle }
     };
+  }
+  function emptyState() {
+    var s = freshState();
+    s.recipes = []; s.staples = [];
+    return s;
   }
 
   // Oppgraderer lagrede data til gjeldende skjema uten å miste noe.
   function migrate(s, raw) {
     var from = s.schema || 1;
-    if (from < SCHEMA) {
-      try {
-        var bk = STORAGE_KEY + ':backup-schema' + from;
-        if (!localStorage.getItem(bk)) localStorage.setItem(bk, raw);
-      } catch (e) { /* backup er valgfri */ }
+    if (from < SCHEMA && raw) {
+      var bk = STORAGE_KEY + ':backup-schema' + from;
+      if (!lsGet(bk)) lsSet(bk, raw);
     }
     s.version = DATA_VERSION;
     s.household = s.household || { id: 'h1', name: 'Husstanden' };
@@ -152,6 +168,14 @@
     if (s.list_week) {
       s.list_items.forEach(function (it) { if (!it.week) it.week = s.list_week; });
       delete s.list_week;
+    }
+    // Skjema 3: avkrysning lagres per uke og vare (checks), avledet fra list_items første gang.
+    if (from < 3 || !s.checks || typeof s.checks !== 'object') {
+      var checks = s.checks && typeof s.checks === 'object' ? s.checks : {};
+      s.list_items.forEach(function (it) {
+        if (it && it.week && it.key && it.checked) { (checks[it.week] = checks[it.week] || {})[it.key] = true; }
+      });
+      s.checks = checks;
     }
     // Avdelinger normaliseres (f.eks. «hus» -> «Hus», som vises som «Husholdning»).
     s.recipes.forEach(function (r) {
@@ -171,26 +195,28 @@
     return s;
   }
 
-  function load() {
+  function loadLocal() {
     var raw = null;
     try { raw = localStorage.getItem(STORAGE_KEY); } catch (e) { memoryOnly = true; }
     if (raw) {
       var s = null;
       try { s = JSON.parse(raw); } catch (e) { s = null; }
       if (s && typeof s === 'object' && Array.isArray(s.recipes)) {
+        hadLocalData = true;
         state = migrate(s, raw);
         save();
         return state;
       }
       // Uleselige data: ta vare på dem før vi starter på nytt.
-      try { localStorage.setItem(STORAGE_KEY + ':corrupt-' + Date.now(), raw); } catch (e) { /* ignorer */ }
+      lsSet(STORAGE_KEY + ':corrupt-' + Date.now(), raw);
     }
     state = freshState();
     save();
     return state;
   }
+  // Lagrer lokalt (bare i lokal modus – i husstandsmodus ligger dataene i Firestore).
   function save() {
-    if (memoryOnly) return;
+    if (memoryOnly || hh) return;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
     catch (e) { memoryOnly = true; toast('Klarte ikke å lagre i nettleseren'); }
   }
@@ -219,19 +245,393 @@
       .map(function (n) { return '<option value="' + esc(n) + '">'; }).join('') + '</datalist>';
   }
 
+  /* ---------- Husstand (Firebase) ---------- */
+
+  function syncMode() { return Sync ? Sync.mode() : null; }
+  function readHH() {
+    try { var v = JSON.parse(lsGet(HH_KEY) || 'null'); return v && v.hid && v.secret ? v : null; } catch (e) { return null; }
+  }
+  function writeHH(v) { lsSet(HH_KEY, JSON.stringify(v)); }
+  function shareLink() {
+    var base = location.href.split('#')[0].split('?')[0];
+    return base + '#join=' + hh.hid + '.' + hh.secret;
+  }
+  function oldestWeek() { return weekDates(-8)[0]; }
+
+  function saveMirror() {
+    if (!hh) return;
+    clearTimeout(saveMirror.t);
+    saveMirror.t = setTimeout(function () {
+      lsSet(MIRROR_PREFIX + hh.hid, JSON.stringify({
+        recipes: state.recipes, staples: state.staples, week_plan: state.week_plan, oneoffs: state.oneoffs,
+        checks: state.checks, list_adjust: state.list_adjust, list_extras: state.list_extras
+      }));
+    }, 300);
+  }
+  function loadMirror(hid) {
+    var s = emptyState();
+    try {
+      var m = JSON.parse(lsGet(MIRROR_PREFIX + hid) || 'null');
+      if (m) Object.keys(m).forEach(function (k) { if (m[k]) s[k] = m[k]; });
+    } catch (e) { /* ignorer */ }
+    return s;
+  }
+
+  // Bytter til husstandsmodus: viser speilet med én gang, kobler til Firestore i bakgrunnen.
+  function enterHousehold(info, initialState) {
+    hh = info;
+    state = initialState || loadMirror(info.hid);
+    renderSyncStatus();
+    syncReady = Sync.init().then(function () {
+      return Sync.isMember(hh.hid).then(function (m) {
+        if (m === false) return Sync.joinHousehold(hh.hid, hh.secret);
+      });
+    }).then(function () {
+      // Flyttingen ble avbrutt etter at husstanden ble opprettet (f.eks. appen ble lukket): fullfør (idempotent).
+      if (!hh.migrated && !hh.joined) return createFromLocal(true);
+    }).then(function () {
+      subscribeHousehold();
+      return Sync;
+    });
+    syncReady.catch(function (e) {
+      syncStatus.failed = true;
+      renderSyncStatus();
+      if (e && e.code === 'permission-denied') toast('Ingen tilgang til husstanden. Åpne invitasjonslenka på nytt.', 5000);
+    });
+  }
+
+  var unsubscribe = null;
+  function subscribeHousehold() {
+    if (unsubscribe) unsubscribe();
+    unsubscribe = Sync.subscribe(hh.hid, oldestWeek(), {
+      recipes: function (docs) {
+        state.recipes = docs.map(function (d) {
+          return { id: d.id, name: d.name, minutes: d.minutes == null ? null : d.minutes, note: d.note || '',
+            ingredients: (d.ingredients || []).map(function (i) { return { name: i.name, qty: i.qty == null ? null : i.qty, unit: i.unit || '', aisle: normAisle(i.aisle) }; }) };
+        });
+        remoteChanged();
+      },
+      staples: function (docs) {
+        state.staples = docs.sort(function (a, b) { return (a.order || 0) - (b.order || 0) || String(a.name).localeCompare(b.name, 'nb'); })
+          .map(function (d) { return { id: d.id, name: d.name, qty: d.qty == null ? null : d.qty, unit: d.unit || '', aisle: normAisle(d.aisle), active: d.active !== false, order: d.order }; });
+        remoteChanged();
+      },
+      days: function (docs) {
+        var wp = {}, oo = {};
+        docs.forEach(function (d) {
+          if (d.oneoff && d.oneoff.name) oo[d.date] = { id: d.oneoff.id, name: d.oneoff.name, ingredients: d.oneoff.ingredients || [] };
+          else wp[d.date] = d.recipe_id || null;
+        });
+        state.week_plan = wp; state.oneoffs = oo;
+        remoteChanged();
+      },
+      lists: function (docs) {
+        var ch = {}, adj = {};
+        docs.forEach(function (d) {
+          var c = {}, a = {};
+          Object.keys(d.checked || {}).forEach(function (k) { if (d.checked[k] === true) c[k] = true; });
+          Object.keys(d.adjust || {}).forEach(function (k) { if (typeof d.adjust[k] === 'number' && d.adjust[k]) a[k] = round3(d.adjust[k]); });
+          ch[d.week] = c; adj[d.week] = a;
+        });
+        state.checks = ch; state.list_adjust = adj;
+        remoteChanged();
+      },
+      extras: function (docs) {
+        state.list_extras = docs.map(function (d) { return { id: d.id, week: d.week, name: d.name, qty: d.qty, unit: d.unit || '', aisle: normAisle(d.aisle), created: d.created }; });
+        remoteChanged();
+      },
+      status: function (st) {
+        syncStatus.pending = st.pending; syncStatus.fromCache = st.fromCache; syncStatus.failed = false;
+        renderSyncStatus();
+      },
+      error: function (err) {
+        if (err && err.code === 'permission-denied' && !subscribeHousehold.retried) {
+          subscribeHousehold.retried = true;
+          Sync.joinHousehold(hh.hid, hh.secret).then(subscribeHousehold, function () {
+            toast('Ingen tilgang til husstanden. Åpne invitasjonslenka på nytt.', 5000);
+          });
+        }
+      }
+    });
+  }
+
+  function renderSyncStatus() {
+    var el = document.getElementById('sync-status');
+    if (!el) return;
+    if (!hh) { el.hidden = true; return; }
+    el.hidden = false;
+    var offline = !navigator.onLine || syncStatus.fromCache || syncStatus.failed;
+    var txt, cls;
+    if (offline) { txt = syncStatus.pending ? 'Frakoblet · lagres senere' : 'Frakoblet'; cls = 'off'; }
+    else if (syncStatus.pending) { txt = 'Lagrer …'; cls = 'pending'; }
+    else { txt = 'Delt'; cls = 'ok'; }
+    el.textContent = txt;
+    el.className = 'sync-status ' + cls;
+    el.setAttribute('data-state', cls);
+  }
+  window.addEventListener('online', renderSyncStatus);
+  window.addEventListener('offline', renderSyncStatus);
+
+  // Skriver til Firestore i rekkefølge når synkroniseringen er klar. Venter ikke på serveren (virker frakoblet).
+  function remote(fn) {
+    if (!hh || !syncReady) return;
+    syncReady.then(function (S) {
+      var p = fn(S.write, hh.hid);
+      if (p && p.catch) p.catch(function (e) {
+        toast(e && e.code === 'permission-denied' ? 'Kunne ikke lagre: ingen tilgang til husstanden' : 'Kunne ikke lagre endringen', 4000);
+      });
+    }, function () { /* feilen vises i statuslinja */ });
+  }
+
+  // Oppdatering fra den andre telefonen: tegn på nytt, men ikke mens noen skriver i et felt.
+  var remoteTimer = null, pendingRender = false;
+  function remoteChanged() {
+    saveMirror();
+    clearTimeout(remoteTimer);
+    remoteTimer = setTimeout(function () {
+      if (isFormRoute()) return;                 // skjemaer tegnes på nytt når man går ut av dem
+      if (isTyping()) { pendingRender = true; return; }
+      pendingRender = false;
+      route();
+    }, 60);
+  }
+  function isFormRoute() {
+    var h = location.hash || '';
+    return /^#retter\/.+/.test(h) || /^#uke\/engang\//.test(h) || /^#(husstand|join=)/.test(h);
+  }
+  function isTyping() {
+    var a = document.activeElement;
+    if (!a || !main.contains(a)) return false;
+    var tag = a.tagName;
+    return tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && a.type !== 'checkbox');
+  }
+  main.addEventListener('focusout', function () {
+    if (!pendingRender) return;
+    setTimeout(function () { if (pendingRender && !isTyping() && !isFormRoute()) { pendingRender = false; route(); } }, 0);
+  });
+
+  function createFromLocal(resume) {
+    var local = resume ? loadLocalCopy() : state;
+    var info = resume ? hh : null;
+    return Sync.createHousehold({
+      recipes: local.recipes, staples: local.staples, week_plan: local.week_plan, oneoffs: local.oneoffs,
+      checks: local.checks, list_adjust: local.list_adjust, list_extras: local.list_extras,
+      onCore: function (v) {
+        if (!resume) writeHH({ hid: v.hid, secret: v.secret, core_done: false, migrated: false });
+      },
+      onCoreDone: function (v) {
+        var cur = readHH() || { hid: v.hid, secret: v.secret };
+        cur.core_done = true; writeHH(cur);
+        if (hh && hh.hid === v.hid) hh.core_done = true;
+      }
+    }, info).then(function (v) {
+      var cur = readHH() || v;
+      cur.core_done = true; cur.migrated = true; writeHH(cur);
+      if (hh && hh.hid === v.hid) { hh.core_done = true; hh.migrated = true; }
+      return v;
+    });
+  }
+  function loadLocalCopy() {
+    try { return migrate(JSON.parse(lsGet(STORAGE_KEY) || 'null') || freshState(), null); } catch (e) { return freshState(); }
+  }
+
+  function startCreate() {
+    if (ui.busy) return;
+    ui.busy = true; ui.error = '';
+    renderHousehold();
+    // Sikkerhetskopi av lokale data før flytting (originalen i ukeshandel:v1 blir også liggende).
+    var raw = lsGet(STORAGE_KEY);
+    if (raw && !lsGet(STORAGE_KEY + ':backup-before-household')) lsSet(STORAGE_KEY + ':backup-before-household', raw);
+    var snapshot = JSON.parse(JSON.stringify(state));
+    Sync.init().then(function () { return createFromLocal(false); }).then(function (v) {
+      ui.busy = false; ui.justCreated = true;
+      enterHousehold(readHH() || { hid: v.hid, secret: v.secret, core_done: true, migrated: true }, snapshot);
+      location.hash = '#husstand';
+      renderHousehold();
+    }, function (e) {
+      ui.busy = false;
+      ui.error = errorText(e);
+      // Kom vi ikke så langt som å opprette husstanden, fortsetter telefonen lokalt som før.
+      var cur = readHH();
+      if (cur && !cur.core_done) { try { localStorage.removeItem(HH_KEY); } catch (x) { /* ignorer */ } }
+      renderHousehold();
+    });
+  }
+
+  function startJoin(hid, secret) {
+    if (ui.busy) return;
+    ui.busy = true; ui.error = '';
+    renderJoin(hid, secret);
+    Sync.init().then(function () { return Sync.joinHousehold(hid, secret); }).then(function () {
+      ui.busy = false;
+      var raw = lsGet(STORAGE_KEY);
+      if (raw && !lsGet(STORAGE_KEY + ':backup-before-household')) lsSet(STORAGE_KEY + ':backup-before-household', raw);
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+      var info = { hid: hid, secret: secret, core_done: true, migrated: false, joined: true };
+      writeHH(info);
+      enterHousehold(info);
+      history.replaceState(null, '', location.pathname + location.search + '#uke');
+      route();
+      toast('Du er med i husstanden');
+    }, function (e) {
+      ui.busy = false;
+      ui.error = e && e.code === 'permission-denied' ? 'Lenka virker ikke. Be om en ny lenke fra den som delte den.' : errorText(e);
+      renderJoin(hid, secret);
+    });
+  }
+  function errorText(e) {
+    var m = (e && (e.code || e.message)) || '';
+    if (/no-server|unavailable|network|timeout/.test(m)) return 'Får ikke kontakt. Sjekk at du har nett og prøv igjen.';
+    if (/not-configured/.test(m)) return 'Deling er ikke satt opp ennå.';
+    return 'Noe gikk galt (' + m + '). Prøv igjen.';
+  }
+  function parseJoin(h) {
+    var m = /^#join=([A-Za-z0-9]{22,64})\.([A-Za-z0-9]{22,64})$/.exec(h || '');
+    return m ? { hid: m[1], secret: m[2] } : null;
+  }
+
+  function renderHousehold() {
+    var h = '<section class="page" data-page="husstand">';
+    if (hh) {
+      h += '<div class="page-head"><h2>Husstand</h2></div>';
+      if (ui.justCreated) {
+        h += '<p class="notice" data-testid="opprettet">Husstanden er opprettet' + (hadLocalData ? ', og rettene, uka og lista fra denne telefonen er flyttet inn.' : '.') + '</p>';
+      }
+      h += '<p>Send denne lenka til den du handler med. Når den åpnes på en annen telefon, ser dere de samme rettene, uka og lista.</p>' +
+        '<label class="field"><span>Delingslenke</span><input type="text" id="share-link" readonly value="' + esc(shareLink()) + '"></label>' +
+        '<div class="form-actions plain"><button type="button" class="btn primary" data-action="copy-link" data-testid="kopier-lenke">Kopier lenke</button>' +
+        '<a class="btn" href="#uke">' + (ui.justCreated ? 'Ferdig' : 'Tilbake') + '</a></div>' +
+        '<p class="hint">Alle som har lenka kan se og endre dataene. Del den bare med husstanden.</p>';
+    } else if (!syncMode()) {
+      h += '<div class="page-head"><h2>Del med husstanden</h2></div><p class="empty">Deling er ikke satt opp ennå.</p><a class="btn" href="#uke">Tilbake</a>';
+    } else {
+      h += '<div class="page-head"><h2>Del med husstanden</h2></div>' +
+        '<p>Opprett en husstand for å dele retter, ukeplan og handleliste. Ingen konto trengs – dere deler en lenke.</p>' +
+        '<p class="hint">' + (hadLocalData ? 'Rettene, ukeplanen og lista på denne telefonen flyttes inn i husstanden.' : 'Husstanden starter med testdataene.') + '</p>' +
+        (ui.error ? '<p class="form-error" data-testid="feil">' + esc(ui.error) + '</p>' : '') +
+        '<div class="form-actions plain"><button type="button" class="btn primary" data-action="create-household" data-testid="opprett"' + (ui.busy ? ' disabled' : '') + '>' +
+        (ui.busy ? 'Oppretter …' : 'Opprett husstand') + '</button>' +
+        '<button type="button" class="linkbtn" data-action="dismiss-onboarding" data-testid="ikke-naa">Ikke nå</button></div>' +
+        '<p class="hint">Har noen i husstanden allerede opprettet en? Åpne lenka de sendte deg på denne telefonen i stedet.</p>';
+    }
+    h += '</section>';
+    main.innerHTML = h;
+  }
+
+  function renderJoin(hid, secret) {
+    var h = '<section class="page" data-page="join"><div class="page-head"><h2>Bli med i husstanden</h2></div>';
+    if (!syncMode()) {
+      h += '<p class="empty">Deling er ikke satt opp ennå.</p><a class="btn" href="#uke">Tilbake</a></section>';
+      main.innerHTML = h;
+      return;
+    }
+    h += '<p>Du er invitert til å dele retter, ukeplan og handleliste.</p>';
+    if (hh && hh.hid !== hid) h += '<p class="hint">Denne telefonen er allerede med i en annen husstand. Blir du med her, byttes husstanden på denne telefonen.</p>';
+    else if (!hh && hadLocalData) h += '<p class="hint">Det som ligger på denne telefonen nå blir ikke slått sammen, men tas vare på som sikkerhetskopi.</p>';
+    if (ui.error) h += '<p class="form-error" data-testid="feil">' + esc(ui.error) + '</p>';
+    h += '<div class="form-actions plain"><button type="button" class="btn primary" data-action="join" data-hid="' + esc(hid) + '" data-secret="' + esc(secret) + '" data-testid="bli-med"' + (ui.busy ? ' disabled' : '') + '>' +
+      (ui.busy ? 'Kobler til …' : 'Bli med') + '</button><a class="btn" href="#uke">Avbryt</a></div></section>';
+    main.innerHTML = h;
+  }
+
+  /* ---------- Endringer (lokalt eller i husstanden) ---------- */
+
+  var ops = {
+    saveRecipe: function (r, isNew) {
+      if (isNew) state.recipes.push(r);
+      save();
+      remote(function (W, hid) { return W.setRecipe(hid, r); });
+    },
+    deleteRecipe: function (id, usedDates) {
+      state.recipes = state.recipes.filter(function (x) { return x.id !== id; });
+      usedDates.forEach(function (d) { state.week_plan[d] = null; });
+      save();
+      remote(function (W, hid) {
+        var ps = [W.deleteRecipe(hid, id)];
+        if (usedDates.length) ps.push(W.setDays(hid, usedDates.map(function (d) { return { date: d, recipe_id: null, oneoff: null }; })));
+        return Promise.all(ps);
+      });
+    },
+    // entries: [{ date, recipe_id, oneoff }]
+    setDays: function (entries) {
+      entries.forEach(function (e) {
+        if (e.oneoff) { state.oneoffs[e.date] = e.oneoff; state.week_plan[e.date] = null; }
+        else { delete state.oneoffs[e.date]; state.week_plan[e.date] = e.recipe_id || null; }
+      });
+      save();
+      remote(function (W, hid) { return W.setDays(hid, entries); });
+    },
+    setChecks: function (week, map) {
+      var c = state.checks[week] = state.checks[week] || {};
+      Object.keys(map).forEach(function (k) { if (map[k]) c[k] = true; else delete c[k]; });
+      state.list_items.forEach(function (i) { if (i.week === week && map.hasOwnProperty(i.key)) i.checked = !!map[i.key]; });
+      save();
+      remote(function (W, hid) { return W.setChecks(hid, week, map); });
+    },
+    adjust: function (week, key, newDelta, change) {
+      var m = state.list_adjust[week] = state.list_adjust[week] || {};
+      if (newDelta) m[key] = newDelta; else delete m[key];
+      save();
+      remote(function (W, hid) { return change ? W.incAdjust(hid, week, key, change) : null; });
+    },
+    clearAdjust: function (week, key) {
+      if (state.list_adjust[week]) delete state.list_adjust[week][key];
+      save();
+      remote(function (W, hid) { return W.clearAdjust(hid, week, key); });
+    },
+    addExtra: function (x) {
+      state.list_extras.push(x);
+      save();
+      remote(function (W, hid) { return W.addExtra(hid, x); });
+    },
+    removeExtras: function (ids) {
+      state.list_extras = state.list_extras.filter(function (x) { return ids.indexOf(x.id) < 0; });
+      save();
+      remote(function (W, hid) { return W.deleteExtras(hid, ids); });
+    },
+    addStaple: function (s) {
+      s.order = Date.now();
+      state.staples.push(s);
+      save();
+      remote(function (W, hid) { return W.setStaple(hid, s); });
+    },
+    updateStaple: function (s, fields) {
+      Object.keys(fields).forEach(function (k) { s[k] = fields[k]; });
+      save();
+      remote(function (W, hid) { return W.updateStaple(hid, s.id, fields); });
+    },
+    deleteStaple: function (id) {
+      state.staples = state.staples.filter(function (s) { return s.id !== id; });
+      save();
+      remote(function (W, hid) { return W.deleteStaple(hid, id); });
+    }
+  };
+
   /* ---------- Router ---------- */
 
   function route() {
-    var h = (location.hash || '').replace(/^#\/?/, '');
+    var raw = location.hash || '';
+    var h = raw.replace(/^#\/?/, '');
     var parts = h.split('/');
     var tab = parts[0];
-    if (['retter', 'uke', 'liste'].indexOf(tab) < 0) tab = 'uke';
+    var join = parseJoin(raw);
+    var special = join || tab === 'husstand';
+    if (!special && ['retter', 'uke', 'liste'].indexOf(tab) < 0) tab = 'uke';
     var links = document.querySelectorAll('.tabs a');
     for (var i = 0; i < links.length; i++) {
-      var on = links[i].getAttribute('data-tab') === tab;
+      var on = !special && links[i].getAttribute('data-tab') === tab;
       links[i].classList.toggle('active', on);
       if (on) links[i].setAttribute('aria-current', 'page'); else links[i].removeAttribute('aria-current');
     }
+    if (join) {
+      if (hh && hh.hid === join.hid) {
+        history.replaceState(null, '', location.pathname + location.search + '#uke');
+        toast('Du er allerede med i denne husstanden');
+        return route();
+      }
+      return renderJoin(join.hid, join.secret);
+    }
+    if (tab === 'husstand') return renderHousehold();
     if (tab === 'retter') {
       if (parts[1] === 'ny') renderRecipeForm(null);
       else if (parts[1] && recipeById(decodeURIComponent(parts[1]))) renderRecipeForm(decodeURIComponent(parts[1]));
@@ -304,10 +704,14 @@
         '</a></li>';
     });
     h += '</ul>';
-    h += '<div class="footer-tools"><button type="button" class="linkbtn" data-action="reset-seed">Tilbakestill testdata</button>' +
-      (memoryOnly ? '<p class="warn">Nettleseren tillater ikke lagring – endringer forsvinner når du lukker siden.</p>' : '') +
-      '</div>';
-    h += '</section>';
+    h += '<div class="footer-tools">';
+    if (hh) h += '<a class="linkbtn" href="#husstand" data-testid="husstand-lenke">Husstand og delingslenke</a>';
+    else {
+      if (syncMode()) h += '<a class="linkbtn" href="#husstand" data-testid="husstand-lenke">Del med husstanden</a><br>';
+      h += '<button type="button" class="linkbtn" data-action="reset-seed">Tilbakestill testdata</button>';
+    }
+    if (memoryOnly && !hh) h += '<p class="warn">Nettleseren tillater ikke lagring – endringer forsvinner når du lukker siden.</p>';
+    h += '</div></section>';
     main.innerHTML = h;
   }
 
@@ -337,14 +741,14 @@
     var ingredients = readIngredients(form);
     var id = form.getAttribute('data-id');
     var note = document.getElementById('f-note').value.trim();
-    if (id) {
-      var r = recipeById(id);
+    var r = id ? recipeById(id) : null;
+    if (r) {
       r.name = name; r.minutes = minutes; r.note = note; r.ingredients = ingredients;
+      ops.saveRecipe(r, false);
     } else {
-      state.recipes.push({ id: uid('r'), name: name, minutes: minutes, note: note, ingredients: ingredients });
+      ops.saveRecipe({ id: uid('r'), name: name, minutes: minutes, note: note, ingredients: ingredients }, true);
     }
-    save();
-    toast(id ? 'Lagret' : 'Rett lagt til');
+    toast(r ? 'Lagret' : 'Rett lagt til');
     location.hash = '#retter';
   }
 
@@ -354,9 +758,7 @@
     var used = Object.keys(state.week_plan).filter(function (d) { return state.week_plan[d] === id; });
     var msg = 'Slette «' + r.name + '»?' + (used.length ? ' Den fjernes også fra ukeplanen.' : '');
     if (!window.confirm(msg)) return;
-    state.recipes = state.recipes.filter(function (x) { return x.id !== id; });
-    used.forEach(function (d) { state.week_plan[d] = null; });
-    save();
+    ops.deleteRecipe(id, used);
     toast('Rett slettet');
     location.hash = '#retter';
   }
@@ -437,8 +839,7 @@
       var clash = dates.filter(function (d) { return d !== date && state.week_plan[d] === recipeId && !state.oneoffs[d]; });
       if (clash.length) { toast('Den retten er allerede brukt denne uka'); renderUke(); return; }
     }
-    state.week_plan[date] = recipeId || null;
-    save();
+    ops.setDays([{ date: date, recipe_id: recipeId || null, oneoff: null }]);
     renderUke();
   }
 
@@ -459,13 +860,13 @@
       var j = Math.floor(Math.random() * (i + 1));
       var t = pool[i]; pool[i] = pool[j]; pool[j] = t;
     }
-    var filled = 0;
+    var entries = [];
     empty.forEach(function (d) {
       if (!pool.length) return;
-      state.week_plan[d] = pool.shift();
-      filled++;
+      entries.push({ date: d, recipe_id: pool.shift(), oneoff: null });
     });
-    save();
+    var filled = entries.length;
+    if (filled) ops.setDays(entries);
     if (filled === empty.length) ui.notice = 'Fylte ' + filled + (filled === 1 ? ' dag.' : ' dager.') + ' Bytt gjerne en kveld.';
     else if (!filled) ui.notice = 'Ingen ledige retter – alle rettene er allerede brukt denne uka.';
     else ui.notice = 'Fylte ' + filled + ' av ' + empty.length + ' tomme dager – det er ikke flere ledige retter. Legg til flere under Retter.';
@@ -497,9 +898,7 @@
     if (!name) return formError('Engangsmiddagen må ha et navn.', 'o-name');
     var date = form.getAttribute('data-date');
     var prev = state.oneoffs[date];
-    state.oneoffs[date] = { id: prev ? prev.id : uid('o'), name: name, ingredients: readIngredients(form) };
-    state.week_plan[date] = null;
-    save();
+    ops.setDays([{ date: date, recipe_id: null, oneoff: { id: prev ? prev.id : uid('o'), name: name, ingredients: readIngredients(form) } }]);
     toast('Engangsmiddag lagret');
     location.hash = '#uke';
   }
@@ -508,8 +907,7 @@
     var o = state.oneoffs[date];
     if (!o) return;
     if (!window.confirm('Fjerne engangsmiddagen «' + o.name + '»?')) return;
-    delete state.oneoffs[date];
-    save();
+    ops.setDays([{ date: date, recipe_id: null, oneoff: null }]);
     toast('Engangsmiddag fjernet');
     if (location.hash !== '#uke') location.hash = '#uke'; else renderUke();
   }
@@ -555,28 +953,32 @@
       if (x.week === weekKey) add('extra', null, x.name, x.qty, x.unit, x.aisle, x.id);
     });
     var adj = state.list_adjust[weekKey] || {};
-    // Behold avkrysning for samme vare (navn + enhet) i samme uke når lista lages på nytt.
-    var prevChecked = {};
-    var oldest = weekDates(ui.weekOffset - 8)[0];
-    var otherWeeks = state.list_items.filter(function (it) {
-      if (it.week === weekKey) { if (it.checked) prevChecked[it.key] = true; return false; }
-      return it.week && it.week >= oldest;
-    });
-    Object.keys(state.list_adjust).forEach(function (w) { if (w < oldest) delete state.list_adjust[w]; });
-    state.list_extras = state.list_extras.filter(function (x) { return x.week >= oldest; });
+    var checks = state.checks[weekKey] || {};
     var items = order.map(function (k) {
       var it = map[k];
       it.week = weekKey;
-      it.checked = !!prevChecked[k];
+      it.checked = !!checks[k];
       it.base_qty = it.qty;
       it.adjust = adj[k] || 0;
       if (it.adjust) it.qty = Math.max(0, round3((it.base_qty || 0) + it.adjust));
       return it;
     });
-    state.list_items = otherWeeks.concat(items);
-    save();
+    if (!hh) {
+      // Lokal modus: behold generert liste (for eldre versjoner) og rydd bort gamle uker.
+      var oldest = weekDates(ui.weekOffset - 8)[0];
+      var otherWeeks = state.list_items.filter(function (it) { return it.week !== weekKey && it.week && it.week >= oldest; });
+      Object.keys(state.list_adjust).forEach(function (w) { if (w < oldest) delete state.list_adjust[w]; });
+      Object.keys(state.checks).forEach(function (w) { if (w < oldest) delete state.checks[w]; });
+      state.list_extras = state.list_extras.filter(function (x) { return x.week >= oldest; });
+      state.list_items = otherWeeks.concat(items.map(function (it) {
+        return { key: it.key, week: it.week, name: it.name, qty: it.qty, unit: it.unit, aisle: it.aisle, checked: it.checked, source: it.source };
+      }));
+      save();
+    }
+    currentList = items;
     return { items: items, dates: dates, dinners: dinners, weekKey: weekKey };
   }
+  var currentList = [];
 
   function matchesFilter(it, f) {
     if (f === 'middag') return it.sources.indexOf('dinner') >= 0;
@@ -594,10 +996,7 @@
       };
     }).filter(function (g) { return g.items.length; });
   }
-  function currentItems() {
-    var wk = weekDates(ui.weekOffset)[0];
-    return state.list_items.filter(function (i) { return i.week === wk; });
-  }
+  function currentItems() { return currentList; }
   function filterLabel(f) {
     for (var i = 0; i < FILTERS.length; i++) if (FILTERS[i][0] === f) return FILTERS[i][1];
     return '';
@@ -693,7 +1092,6 @@
   function adjustItem(key, dir) {
     var it = currentItems().filter(function (i) { return i.key === key; })[0];
     if (!it) return;
-    var wk = it.week;
     var step = stepFor(it.unit);
     var cur = it.qty == null ? 0 : it.qty;
     var next = dir > 0 ? cur + step : Math.max(0, cur - step);
@@ -701,9 +1099,7 @@
     var ratio = round3(cur / step);
     if (ratio !== Math.round(ratio)) next = round3((dir > 0 ? Math.ceil(ratio) : Math.floor(ratio)) * step);
     var delta = round3(next - (it.base_qty || 0));
-    var m = state.list_adjust[wk] = state.list_adjust[wk] || {};
-    if (delta) m[key] = delta; else delete m[key];
-    save();
+    ops.adjust(it.week, key, delta, round3(delta - (it.adjust || 0)));
     renderListSection();
   }
 
@@ -731,7 +1127,8 @@
     el.innerHTML = h;
   }
 
-  function copyText(text) {
+  function copyText(text, okMsg) {
+    okMsg = okMsg || 'Lista er kopiert';
     function fallback() {
       var ta = document.createElement('textarea');
       ta.value = text;
@@ -743,10 +1140,10 @@
       var ok = false;
       try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
       document.body.removeChild(ta);
-      if (ok) toast('Lista er kopiert'); else showCopyDialog(text);
+      if (ok) toast(okMsg); else showCopyDialog(text);
     }
     if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) {
-      navigator.clipboard.writeText(text).then(function () { toast('Lista er kopiert'); }, fallback);
+      navigator.clipboard.writeText(text).then(function () { toast(okMsg); }, fallback);
     } else {
       fallback();
     }
@@ -758,7 +1155,7 @@
     var d = document.createElement('div');
     d.id = 'copy-dialog';
     d.className = 'overlay';
-    d.innerHTML = '<div class="sheet" role="dialog" aria-label="Kopier lista"><h3>Kopier lista</h3>' +
+    d.innerHTML = '<div class="sheet" role="dialog" aria-label="Kopier"><h3>Kopier</h3>' +
       '<p class="hint">Kopiering virket ikke automatisk. Merk teksten og kopier.</p>' +
       '<textarea readonly rows="12"></textarea><button type="button" class="btn primary" data-close>Lukk</button></div>';
     d.querySelector('textarea').value = text;
@@ -786,6 +1183,7 @@
     } else if (a === 'delete-recipe') {
       deleteRecipe(document.getElementById('recipe-form').getAttribute('data-id'));
     } else if (a === 'reset-seed') {
+      if (hh) return;
       if (!window.confirm('Tilbakestille til testdata? Alle retter, ukeplaner og faste varer erstattes.')) return;
       state = freshState();
       save();
@@ -798,15 +1196,18 @@
     else if (a === 'remove-oneoff') { removeOneoff(btn.getAttribute('data-date')); }
     else if (a === 'clear-week') {
       if (!window.confirm('Tømme alle kvelder denne uka?')) return;
-      weekDates(ui.weekOffset).forEach(function (d) { state.week_plan[d] = null; delete state.oneoffs[d]; });
-      save(); renderUke();
+      ops.setDays(weekDates(ui.weekOffset).filter(function (d) { return state.week_plan[d] || state.oneoffs[d]; })
+        .map(function (d) { return { date: d, recipe_id: null, oneoff: null }; }));
+      renderUke();
     } else if (a === 'copy-text') {
       var text = listAsText();
       if (!text) { toast('Alt er krysset av'); return; }
       copyText(text);
     } else if (a === 'uncheck-all') {
-      currentItems().forEach(function (i) { i.checked = false; });
-      save(); renderListSection();
+      var m = {};
+      currentItems().forEach(function (i) { if (i.checked) m[i.key] = false; });
+      ops.setChecks(currentItems().length ? currentItems()[0].week : weekDates(ui.weekOffset)[0], m);
+      renderListSection();
     } else if (a === 'filter') {
       ui.filter = btn.getAttribute('data-filter');
       renderListSection();
@@ -816,13 +1217,21 @@
       var key = btn.closest('.item').getAttribute('data-key');
       var it = currentItems().filter(function (i) { return i.key === key; })[0];
       if (!it) return;
-      state.list_extras = state.list_extras.filter(function (x) { return it.extra_ids.indexOf(x.id) < 0; });
-      if (state.list_adjust[it.week]) delete state.list_adjust[it.week][key];
-      save(); renderListSection();
+      ops.removeExtras(it.extra_ids.slice());
+      if (it.adjust) ops.clearAdjust(it.week, key);
+      renderListSection();
     } else if (a === 'delete-staple') {
-      var li = btn.closest('.staple-row');
-      state.staples = state.staples.filter(function (s) { return s.id !== li.getAttribute('data-id'); });
-      save(); renderListSection(); renderStaplesSection();
+      ops.deleteStaple(btn.closest('.staple-row').getAttribute('data-id'));
+      renderListSection(); renderStaplesSection();
+    } else if (a === 'create-household') {
+      startCreate();
+    } else if (a === 'dismiss-onboarding') {
+      lsSet(ONBOARD_KEY, 'dismissed');
+      location.hash = '#uke';
+    } else if (a === 'join') {
+      startJoin(btn.getAttribute('data-hid'), btn.getAttribute('data-secret'));
+    } else if (a === 'copy-link') {
+      copyText(shareLink(), 'Lenka er kopiert');
     }
   });
 
@@ -833,8 +1242,10 @@
     } else if (t.type === 'checkbox' && t.hasAttribute('data-key')) {
       var key = t.getAttribute('data-key');
       var cur = currentItems();
+      var week = cur.length ? cur[0].week : weekDates(ui.weekOffset)[0];
       cur.forEach(function (i) { if (i.key === key) i.checked = t.checked; });
-      save();
+      var m = {}; m[key] = t.checked;
+      ops.setChecks(week, m);
       t.closest('.item').classList.toggle('checked', t.checked);
       var shown = cur.filter(function (i) { return matchesFilter(i, ui.filter); });
       var l = main.querySelector('[data-testid="igjen"]');
@@ -859,12 +1270,13 @@
       var srow = t.closest('.staple-row');
       var s = state.staples.filter(function (x) { return x.id === srow.getAttribute('data-id'); })[0];
       if (!s) return;
-      if (t.classList.contains('st-active')) s.active = t.checked;
-      else if (t.classList.contains('st-name')) { if (t.value.trim()) s.name = t.value.trim(); else t.value = s.name; }
-      else if (t.classList.contains('st-qty')) { s.qty = parseQty(t.value); t.value = formatQty(s.qty); }
-      else if (t.classList.contains('st-unit')) s.unit = t.value;
-      else if (t.classList.contains('st-aisle')) s.aisle = t.value;
-      save();
+      var f = {};
+      if (t.classList.contains('st-active')) f.active = t.checked;
+      else if (t.classList.contains('st-name')) { if (t.value.trim()) f.name = t.value.trim(); else { t.value = s.name; return; } }
+      else if (t.classList.contains('st-qty')) { f.qty = parseQty(t.value); t.value = formatQty(f.qty); }
+      else if (t.classList.contains('st-unit')) f.unit = t.value;
+      else if (t.classList.contains('st-aisle')) f.aisle = t.value;
+      ops.updateStaple(s, f);
       renderListSection();
     }
   });
@@ -872,9 +1284,7 @@
   main.addEventListener('toggle', function (e) {
     if (!e.target.classList) return;
     if (e.target.classList.contains('staples')) ui.staplesOpen = e.target.open;
-    if (e.target.classList.contains('add-item')) {
-      ui.addOpen = e.target.open;
-    }
+    if (e.target.classList.contains('add-item')) ui.addOpen = e.target.open;
   }, true);
 
   main.addEventListener('submit', function (e) {
@@ -890,14 +1300,13 @@
         aisle: document.getElementById('ai-aisle').value };
       if (document.getElementById('ai-staple').checked) {
         item.id = uid('s'); item.active = true;
-        state.staples.push(item);
+        ops.addStaple(item);
         toast('Lagt til i lista og i faste husvarer');
       } else {
-        item.id = uid('x'); item.week = weekDates(ui.weekOffset)[0];
-        state.list_extras.push(item);
+        item.id = uid('x'); item.week = weekDates(ui.weekOffset)[0]; item.created = Date.now();
+        ops.addExtra(item);
         toast('Lagt til i lista for denne uka');
       }
-      save();
       ui.addOpen = true;
       renderListSection(); renderStaplesSection();
       document.getElementById('ai-name').focus();
@@ -905,17 +1314,41 @@
       var sname = document.getElementById('st-new-name').value.trim();
       if (!sname) { document.getElementById('st-new-name').focus(); return; }
       var sq = parseQty(document.getElementById('st-new-qty').value);
-      state.staples.push({ id: uid('s'), name: sname, qty: sq == null ? 1 : sq,
+      ops.addStaple({ id: uid('s'), name: sname, qty: sq == null ? 1 : sq,
         unit: document.getElementById('st-new-unit').value,
         aisle: document.getElementById('st-new-aisle').value, active: true });
-      save();
       renderListSection(); renderStaplesSection();
       document.getElementById('st-new-name').focus();
     }
   });
 
-  window.addEventListener('hashchange', function () { route(); window.scrollTo(0, 0); });
+  window.addEventListener('hashchange', function () {
+    ui.error = '';
+    if (!/^#husstand/.test(location.hash)) ui.justCreated = false;
+    route(); window.scrollTo(0, 0);
+  });
 
-  load();
+  /* ---------- Oppstart ---------- */
+
+  loadLocal();
+  var info = readHH();
+  if (info && syncMode() && info.core_done) {
+    enterHousehold(info);
+  } else if (info && syncMode()) {
+    // Oppretting ble avbrutt før husstanden var bekreftet: bli lokal, og sjekk i bakgrunnen om den faktisk ble opprettet.
+    Sync.init().then(function () { return Sync.isMember(info.hid); }).then(function (m) {
+      if (m) { info.core_done = true; writeHH(info); enterHousehold(info); route(); }
+      else if (m === false) { try { localStorage.removeItem(HH_KEY); } catch (x) { /* ignorer */ } }
+    }, function () { /* prøver igjen neste gang */ });
+  } else if (!info && syncMode() && lsGet(ONBOARD_KEY) !== 'dismissed' && !parseJoin(location.hash)) {
+    // Første gang med deling tilgjengelig: tilby å opprette husstand.
+    history.replaceState(null, '', location.pathname + location.search + '#husstand');
+  }
   route();
+
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* frakoblet-støtte er valgfri */ });
+    });
+  }
 })();

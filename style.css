@@ -28,7 +28,7 @@ a { color: var(--brand); }
 h1, h2, h3 { margin: 0; line-height: 1.2; }
 
 .topbar {
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 8px;
   background: var(--card); color: var(--ink); border-bottom: 1px solid var(--line);
   padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
 }
@@ -224,3 +224,15 @@ a { color: var(--brand); }
 .item.zero .item-name, .item.zero .item-qty { color: var(--muted); }
 .item.checked .qbtn { opacity: .5; }
 select option:disabled { color: #6f7773; }
+
+/* v0.2 */
+.sync-status { font-size: 12px; font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.sync-status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.sync-status.ok::before { background: var(--brand); }
+.sync-status.pending::before { background: #d9c27a; }
+.sync-status.off { color: #e6cf8a; }
+.sync-status.off::before { background: #d9a55a; }
+.form-actions.plain { position: static; margin: 12px 0; padding: 0; border: 0; background: none; align-items: center; }
+[data-page="husstand"] p, [data-page="join"] p { margin: 0 0 12px; }
+#share-link { font-size: 14px; color: var(--muted); }
+.footer-tools .linkbtn { display: inline-block; }
