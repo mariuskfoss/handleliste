@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.4 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Ukeshandel v0.4.5 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -1123,7 +1123,8 @@
     h += '<div class="page-head"><a class="back" href="#retter">‹ Retter</a><h2>' + (r ? 'Rediger rett' : 'Ny rett') + '</h2></div>';
     h += '<form id="recipe-form" data-id="' + esc(r ? r.id : '') + '" novalidate>';
     h += '<label class="field"><span>Navn</span><input id="f-name" type="text" required value="' + esc(r ? r.name : '') + '" placeholder="F.eks. Fiskesuppe"></label>';
-    h += '<label class="field"><span>Tid (minutter)</span><input id="f-minutes" type="number" inputmode="numeric" min="0" step="1" value="' + esc(r && r.minutes != null ? r.minutes : '') + '" placeholder="30"></label>';
+    h += '<label class="field"><span>Tid (minutter)</span><input id="f-minutes" type="number" inputmode="numeric" min="0" step="1" value="' + esc(r && r.minutes != null ? r.minutes : '') + '" placeholder="30" aria-describedby="f-minutes-hint"></label>' +
+      '<p class="field-hint" id="f-minutes-hint">«Fyll man–fre» velger helst retter på ' + RASK_MIN + ' min eller mindre.</p>';   // v0.4.5
     h += '<label class="field"><span>Merknad (valgfri)</span><input id="f-note" type="text" value="' + esc(r ? r.note || '' : '') + '" placeholder="F.eks. unger spiser dette"></label>';
     h += ingredientsFieldset(r ? r.ingredients : []);
     h += '<p class="form-error" id="form-error" hidden></p>';
@@ -1274,33 +1275,71 @@
     renderUke();
   }
 
-  // Tilfeldige retter på tomme dager man–fre. Ingen rett to ganger i uka; satte dager røres ikke.
+  // v0.4.5 (spec v0.4 punkt 5): smartere «Fyll man–fre». Ren funksjon (tilfeldigheten sendes inn), brukt av
+  // fillWeekdays og av testene via window.UkeshandelFill.
+  //   recipes: [{ id, minutes }], used: { id: true } (allerede i uka), last: { id: true } (i forrige uke),
+  //   n: antall tomme hverdager, rng: () => [0, 1).
+  // Rekkefølge for valg: 1) ikke i forrige uke og rask (≤ RASK_MIN min), tilfeldig; 2) ikke i forrige uke, ikke rask,
+  // lavest minutter først (tilfeldig ved likt, ukjent tid sist); 3) og 4) det samme blant forrige ukes retter, bare
+  // hvis det ikke er nok andre. Plassering: raske retter tilfeldig på de første tomme dagene, tregere (hvis de måtte
+  // med) til slutt i uka, raskest først – så fredag får den tregeste.
+  var RASK_MIN = 30;
+  function isRask(r) { return typeof r.minutes === 'number' && r.minutes > 0 && r.minutes <= RASK_MIN; }
+  function minutesKey(r) { return typeof r.minutes === 'number' && r.minutes > 0 ? r.minutes : Infinity; }
+  function planFill(recipes, used, last, n, rng) {
+    rng = rng || Math.random;
+    function shuffle(a) {
+      a = a.slice();
+      for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(rng() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; }
+      return a;
+    }
+    function bySpeed(a) { return shuffle(a).sort(function (x, y) { return minutesKey(x) - minutesKey(y); }); }   // stabil sortering
+    function tier(list) {
+      return shuffle(list.filter(isRask)).concat(bySpeed(list.filter(function (r) { return !isRask(r); })));
+    }
+    var cand = recipes.filter(function (r) { return !used[r.id]; });
+    var fresh = tier(cand.filter(function (r) { return !last[r.id]; }));
+    var old = tier(cand.filter(function (r) { return !!last[r.id]; }));
+    var picks = fresh.concat(old).slice(0, Math.max(0, n));
+    var order = shuffle(picks.filter(isRask)).concat(bySpeed(picks.filter(function (r) { return !isRask(r); })));
+    return {
+      ids: order.map(function (r) { return r.id; }),
+      fromLastWeek: picks.filter(function (r) { return !!last[r.id]; }).length,
+      slow: picks.filter(function (r) { return !isRask(r); }).length,
+      freshAvailable: fresh.length
+    };
+  }
+  window.UkeshandelFill = { plan: planFill, RASK_MIN: RASK_MIN };
+
+  // Tomme dager man–fre fylles (planFill). Ingen rett to ganger i uka; satte dager røres ikke.
   function fillWeekdays() {
     var dates = weekDates(ui.weekOffset);
-    var used = {};
+    var used = {}, last = {};
     dates.forEach(function (d) {
       var id = state.week_plan[d];
       if (!state.oneoffs[d] && id && recipeById(id)) used[id] = true;
+    });
+    weekDates(ui.weekOffset - 1).forEach(function (d) {
+      var id = state.week_plan[d];
+      if (!state.oneoffs[d] && id) last[id] = true;
     });
     var empty = dates.slice(0, 5).filter(function (d) {
       return !state.oneoffs[d] && !(state.week_plan[d] && recipeById(state.week_plan[d]));
     });
     if (!empty.length) { ui.notice = 'Man–fre er allerede fylt.'; renderUke(); return; }
-    var pool = state.recipes.filter(function (r) { return !used[r.id]; }).map(function (r) { return r.id; });
-    for (var i = pool.length - 1; i > 0; i--) {
-      var j = Math.floor(Math.random() * (i + 1));
-      var t = pool[i]; pool[i] = pool[j]; pool[j] = t;
-    }
-    var entries = [];
-    empty.forEach(function (d) {
-      if (!pool.length) return;
-      entries.push({ date: d, recipe_id: pool.shift(), oneoff: null });
-    });
+    var plan = planFill(state.recipes, used, last, empty.length);
+    var entries = plan.ids.map(function (id, k) { return { date: empty[k], recipe_id: id, oneoff: null }; });
     var filled = entries.length;
     if (filled) ops.setDays(entries);
-    if (filled === empty.length) ui.notice = 'Fylte ' + filled + (filled === 1 ? ' dag.' : ' dager.') + ' Bytt gjerne en kveld.';
+    // Melding: hva som ble valgt og hvorfor (kort, én linje i vanlig tilfelle).
+    var hasLast = Object.keys(last).length > 0;
+    var what = !filled ? '' : (plan.slow ? '' : ' med raske retter (' + RASK_MIN + ' min eller mindre)') +
+      (hasLast && !plan.fromLastWeek ? (plan.slow ? ' med retter' : '') + ' som ikke var med forrige uke' : '');
+    var why = (plan.fromLastWeek ? ' ' + (plan.fromLastWeek === filled ? (filled === 1 ? 'Den' : 'Alle') : plan.fromLastWeek + ' av dem') + ' var med forrige uke – det var ikke nok andre retter.' : '') +
+      (plan.slow ? ' ' + (plan.slow === filled ? (filled === 1 ? 'Den' : 'Alle') : plan.slow + ' av dem') + ' tar over ' + RASK_MIN + ' min – det var ikke nok raske retter' + (plan.slow < filled ? (plan.slow === 1 ? '; den står sist i uka.' : '; de står sist i uka.') : '.') : '');
+    if (filled === empty.length) ui.notice = 'Fylte ' + filled + (filled === 1 ? ' dag' : ' dager') + what + '.' + why + ' Bytt gjerne en kveld.';
     else if (!filled) ui.notice = 'Ingen ledige retter – alle rettene er allerede brukt denne uka.';
-    else ui.notice = 'Fylte ' + filled + ' av ' + empty.length + ' tomme dager – det er ikke flere ledige retter. Legg til flere under Retter.';
+    else ui.notice = 'Fylte ' + filled + ' av ' + empty.length + ' tomme dager' + what + ' – det er ikke flere ledige retter.' + why + ' Legg til flere under Retter.';
     renderUke();
   }
 
