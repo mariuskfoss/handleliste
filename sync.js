@@ -86,6 +86,17 @@ function stapleDoc(s, order) {
 function oneoffDoc(o) {
   return o ? { id: o.id, name: o.name, ingredients: recipeDoc(o).ingredients } : null;
 }
+// v0.4.4: kort signatur for en dag slik den ligger i Firestore (samme som app.js bruker for det telefonen viser).
+function daySig(d) {
+  if (!d) return '';
+  if (d.oneoff && d.oneoff.name) return 'o:' + (d.oneoff.id || d.oneoff.name);
+  return d.recipe_id ? 'r:' + d.recipe_id : '';
+}
+function dayBody(date, d) {
+  const o = d && d.oneoff && d.oneoff.name ? d.oneoff : null;
+  return { date, recipe_id: o ? null : ((d && d.recipe_id) || null),
+    oneoff: o ? { id: o.id || null, name: o.name, ingredients: o.ingredients || [] } : null };
+}
 function extraDoc(x) {
   return { week: x.week, name: x.name, qty: x.qty == null ? null : x.qty, unit: x.unit || '', aisle: x.aisle, created: x.created || Date.now() };
 }
@@ -191,6 +202,24 @@ const W = {
     entries.forEach(e => b.set(ctx.fs.doc(...hh(hid, 'days', e.date)), { date: e.date, recipe_id: e.oneoff ? null : (e.recipe_id || null), oneoff: oneoffDoc(e.oneoff) }));
     return b.commit();
   },
+  // v0.4.4: bytt to kvelder atomisk. a/b = { date, sig } der sig er det telefonen så ('r:<id>' / 'o:<id>' / '').
+  // Transaksjonen leser begge dagene på serveren og bytter bare hvis de fortsatt er som telefonen så; ellers kastes
+  // en feil med code 'swap-conflict' (ingenting skrives). Innholdet som flyttes er serverens, så en engangsmiddag som
+  // nettopp ble redigert på en annen telefon følger med uendret. Krever nett (se app.js for frakoblet).
+  swapDays: async (hid, a, b) => {
+    const { fs, db } = ctx;
+    const ra = fs.doc(...hh(hid, 'days', a.date)), rb = fs.doc(...hh(hid, 'days', b.date));
+    return fs.runTransaction(db, async tx => {
+      const [sa, sb] = [await tx.get(ra), await tx.get(rb)];
+      const da = sa.exists() ? sa.data() : null, dbb = sb.exists() ? sb.data() : null;
+      if (daySig(da) !== a.sig || daySig(dbb) !== b.sig) {
+        const e = new Error('swap-conflict'); e.code = 'swap-conflict'; throw e;
+      }
+      tx.set(ra, dayBody(a.date, dbb));
+      tx.set(rb, dayBody(b.date, da));
+      return true;
+    });
+  },
   setChecks: (hid, week, map) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'lists', week)), { week, checked: map }, { merge: true }),
   incAdjust: (hid, week, key, change) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'lists', week)), { week, adjust: { [key]: ctx.fs.increment(change) } }, { merge: true }),
   // v0.4.3: basisvalg per uke som felt i adjust-kartet («basis:<vare>» = 1 lagt til / -1 ikke nå), feltvis flettet.
@@ -204,7 +233,9 @@ const W = {
   },
   setStaple: (hid, s) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'staples', s.id)), stapleDoc(s)),
   updateStaple: (hid, id, fields) => ctx.fs.updateDoc(ctx.fs.doc(...hh(hid, 'staples', id)), fields),
-  deleteStaple: (hid, id) => ctx.fs.deleteDoc(ctx.fs.doc(...hh(hid, 'staples', id)))
+  deleteStaple: (hid, id) => ctx.fs.deleteDoc(ctx.fs.doc(...hh(hid, 'staples', id))),
+  // v0.4.4: venter til telefonens egne ventende skrivinger er bekreftet (før en bytte-transaksjon).
+  settled: () => ctx.fs.waitForPendingWrites(ctx.db)
 };
 
 window.UkeshandelSync = { mode, init, randomCode, createHousehold, joinHousehold, isMember, subscribe, write: W, uid: () => ctx && ctx.uid };

@@ -3,10 +3,10 @@
  * Firebase-SDK fra gstatic (versjonert, endres aldri): mellomlager først.
  * Firestore/innlogging går aldri via denne (håndteres av Firebase sin egen frakoblet-lagring).
  */
-var VERSION = '0.4.3c';
+var VERSION = '0.4.4';
 var CACHE = 'ukeshandel-' + VERSION;
 var SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
-var APP_FILES = ['./', 'index.html', 'style.css?v=0.4.3c', 'firebase-config.js?v=0.4.3c', 'seed.js?v=0.4.3c', 'library.js?v=0.4.3c', 'units.js?v=0.4.3c', 'sync.js?v=0.4.3c', 'app.js?v=0.4.3c'];
+var APP_FILES = ['./', 'index.html', 'style.css?v=0.4.4', 'firebase-config.js?v=0.4.4', 'seed.js?v=0.4.4', 'library.js?v=0.4.4', 'units.js?v=0.4.4', 'sync.js?v=0.4.4', 'app.js?v=0.4.4'];
 var SDK_FILES = [SDK + 'firebase-app.js', SDK + 'firebase-auth.js', SDK + 'firebase-firestore.js'];
 
 self.addEventListener('install', function (e) {

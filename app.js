@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.3c — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Ukeshandel v0.4.4 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -343,6 +343,8 @@
   function enterHousehold(info, initialState) {
     hh = info;
     state = initialState || loadMirror(info.hid);
+    swapBusy = false; lastDays = [];
+    loadSwaps(info.hid);   // v0.4.4
     renderSyncStatus();
     syncReady = Sync.init().then(function () {
       return Sync.isMember(hh.hid).then(function (m) {
@@ -410,12 +412,8 @@
         remoteChanged();
       },
       days: function (docs) {
-        var wp = {}, oo = {};
-        docs.forEach(function (d) {
-          if (d.oneoff && d.oneoff.name) oo[d.date] = { id: d.oneoff.id, name: d.oneoff.name, ingredients: d.oneoff.ingredients || [] };
-          else wp[d.date] = d.recipe_id || null;
-        });
-        state.week_plan = wp; state.oneoffs = oo;
+        lastDays = docs;
+        applyDays();
         if (!ui.weekTouched && !subscribeHousehold.daysSeen) ui.weekOffset = defaultWeekOffset();
         subscribeHousehold.daysSeen = true;
         remoteChanged();
@@ -438,6 +436,7 @@
       status: function (st) {
         syncStatus.pending = st.pending; syncStatus.fromCache = st.fromCache; syncStatus.failed = false;
         renderSyncStatus();
+        processSwaps();   // v0.4.4: bytter gjort frakoblet kjøres når telefonen er tilkoblet igjen
       },
       error: function (err) {
         if (err && err.code === 'permission-denied' && !subscribeHousehold.retried) {
@@ -456,15 +455,17 @@
     if (!hh) { el.hidden = true; return; }
     el.hidden = false;
     var offline = !navigator.onLine || syncStatus.fromCache || syncStatus.failed;
+    var pending = syncStatus.pending || swapOverlays.length > 0;   // v0.4.4: bytter i køen
     var txt, cls;
-    if (offline) { txt = syncStatus.pending ? 'Frakoblet · lagres senere' : 'Frakoblet'; cls = 'off'; }
-    else if (syncStatus.pending) { txt = 'Lagrer …'; cls = 'pending'; }
+    if (offline) { txt = pending ? 'Frakoblet · lagres senere' : 'Frakoblet'; cls = 'off'; }
+    else if (pending) { txt = 'Lagrer …'; cls = 'pending'; }
     else { txt = 'Delt'; cls = 'ok'; }
     el.textContent = txt;
     el.className = 'sync-status ' + cls;
     el.setAttribute('data-state', cls);
   }
   window.addEventListener('online', renderSyncStatus);
+  window.addEventListener('online', function () { processSwaps(); });   // v0.4.4
   window.addEventListener('offline', renderSyncStatus);
 
   // Skriver til Firestore i rekkefølge når synkroniseringen er klar. Venter ikke på serveren (virker frakoblet).
@@ -632,6 +633,144 @@
 
   /* ---------- Endringer (lokalt eller i husstanden) ---------- */
 
+  /* ---------- v0.4.4: bytte kvelder ---------- */
+
+  // Innholdet på en dag slik denne telefonen har det, med signatur ('r:<id>' / 'o:<id>' / '') som sync.js sammenligner med.
+  function dayEntry(d) {
+    var o = state.oneoffs[d];
+    if (o) return { date: d, recipe_id: null, oneoff: o, sig: 'o:' + (o.id || o.name) };
+    var id = state.week_plan[d] || null;
+    return { date: d, recipe_id: id, oneoff: null, sig: id ? 'r:' + id : '' };
+  }
+  function putDay(d, e) {
+    if (e.oneoff) { state.oneoffs[d] = e.oneoff; state.week_plan[d] = null; }
+    else { delete state.oneoffs[d]; state.week_plan[d] = e.recipe_id || null; }
+  }
+  // Husstand: siste dager fra Firestore + bytter som ennå ikke er bekreftet av serveren (vises med en gang, også etter
+  // omstart frakoblet). Køen lagres per husstand i localStorage.
+  var SWAPQ_PREFIX = 'ukeshandel:swaps:';
+  var lastDays = [], swapOverlays = [], swapBusy = false;
+  function applyDays() {
+    var wp = {}, oo = {};
+    lastDays.forEach(function (d) {
+      if (d.oneoff && d.oneoff.name) oo[d.date] = { id: d.oneoff.id, name: d.oneoff.name, ingredients: d.oneoff.ingredients || [] };
+      else wp[d.date] = d.recipe_id || null;
+    });
+    state.week_plan = wp; state.oneoffs = oo;
+    swapOverlays.forEach(function (ov) { putDay(ov.a, ov.ea); putDay(ov.b, ov.eb); });
+  }
+  function saveSwaps() { if (hh) lsSet(SWAPQ_PREFIX + hh.hid, JSON.stringify(swapOverlays)); }
+  function loadSwaps(hid) {
+    try { var q = JSON.parse(lsGet(SWAPQ_PREFIX + hid) || '[]'); swapOverlays = Array.isArray(q) ? q : []; } catch (e) { swapOverlays = []; }
+    swapOverlays.forEach(function (ov) { putDay(ov.a, ov.ea); putDay(ov.b, ov.eb); });
+  }
+  function dropOverlay(ov) { swapOverlays = swapOverlays.filter(function (x) { return x !== ov; }); saveSwaps(); }
+  function isOffline() { return !navigator.onLine || syncStatus.fromCache || syncStatus.failed; }
+  // Et bytte i husstanden lagres som en transaksjon som leser begge dagene på serveren og bare bytter hvis de fortsatt er
+  // slik denne telefonen så dem. Frakoblet venter byttet i køen og kjøres (med samme sjekk) når telefonen er tilkoblet
+  // igjen, så et bytte aldri overskriver det en annen telefon har gjort i mellomtiden. Køen kjøres i rekkefølge.
+  function remoteSwap(a, b, ca, cb) {
+    swapOverlays.push({ a: a, b: b, ea: cb, eb: ca, sa: ca.sig, sb: cb.sig, offline: isOffline() || undefined });
+    saveSwaps(); saveMirror(); renderSyncStatus();
+    processSwaps();
+  }
+  function processSwaps() {
+    if (swapBusy || !hh || !syncReady || !swapOverlays.length || isOffline()) { renderSyncStatus(); return; }
+    swapBusy = true;
+    var ov = swapOverlays[0], hid = hh.hid;
+    renderSyncStatus();
+    syncReady.then(function (S) {
+      return S.write.settled().then(function () {
+        return S.write.swapDays(hid, { date: ov.a, sig: ov.sa }, { date: ov.b, sig: ov.sb });
+      });
+    }).then(function () {
+      swapBusy = false;
+      dropOverlay(ov);
+      renderSyncStatus();
+      processSwaps();
+    }, function (e) {
+      swapBusy = false;
+      var code = e && e.code;
+      if (!hh || hh.hid !== hid || swapOverlays.indexOf(ov) < 0) return;
+      if (code === 'unavailable' || code === 'deadline-exceeded' || code === 'failed-precondition' && isOffline()) {
+        renderSyncStatus();       // prøver igjen når telefonen er tilkoblet (status-/online-hendelse)
+        return;
+      }
+      dropOverlay(ov);
+      applyDays(); saveMirror();
+      ui.swap = null;
+      toast(code === 'swap-conflict' ? (ov.offline ? 'Byttet du gjorde frakoblet ble ikke lagret – uka ble endret på en annen telefon'
+        : 'Uka ble endret på en annen telefon – se over og prøv igjen')
+        : code === 'permission-denied' ? 'Kunne ikke lagre: ingen tilgang til husstanden' : 'Kunne ikke bytte kveldene', 5000);
+      if (!isFormRoute()) route();
+      renderSyncStatus();
+      processSwaps();
+    });
+  }
+  // Vanlige endringer av en dag som har et bytte i køen: byttet lagres først som vanlige skrivinger (i rekkefølge),
+  // så den nye endringen ikke skjules av byttet eller får byttet til å feile.
+  function takeSwapsFor(dates) {
+    var hit = swapOverlays.filter(function (ov) { return dates.indexOf(ov.a) >= 0 || dates.indexOf(ov.b) >= 0; });
+    if (hit.length) {
+      swapOverlays = swapOverlays.filter(function (ov) { return hit.indexOf(ov) < 0; });
+      saveSwaps(); renderSyncStatus();
+    }
+    return hit;
+  }
+  function writeSwapsPlain(hit, W, hid) {
+    hit.forEach(function (ov) {
+      W.setDays(hid, [{ date: ov.a, recipe_id: ov.ea.recipe_id, oneoff: ov.ea.oneoff }, { date: ov.b, recipe_id: ov.eb.recipe_id, oneoff: ov.eb.oneoff }]).catch(function () { /* vises som vanlig lagringsfeil */ });
+    });
+  }
+
+  function dinnerName(d) {
+    var o = state.oneoffs[d];
+    if (o) return o.name;
+    var r = state.week_plan[d] ? recipeById(state.week_plan[d]) : null;
+    return r ? r.name : '';
+  }
+  // Selve byttet fra UI-et: flytter/bytter, viser hva som skjedde med «Angre», og setter fokus på der retten havnet.
+  function swapNow(from, to, focusSel) {
+    var nf = dinnerName(from), nt = dinnerName(to);
+    if (!nf && !nt) return;
+    ops.swapDays(from, to);
+    ui.swap = null;
+    var lf = dayName(from).toLowerCase(), lt = dayName(to).toLowerCase();
+    var msg = nf && nt ? nf + ' til ' + lt + ', ' + nt + ' til ' + lf
+      : nf ? nf + ' flyttet til ' + lt : nt + ' flyttet til ' + lf;
+    var after = { f: dayEntry(from).sig, t: dayEntry(to).sig };
+    renderUke();
+    focusEl(focusSel || '[data-action="swap-start"][data-date="' + to + '"]', '#day-' + to);
+    toast(msg, UNDO_MS, { label: 'Angre', run: function () {
+      if (dayEntry(from).sig !== after.f || dayEntry(to).sig !== after.t) { toast('Kan ikke angre – uka er endret siden'); return; }
+      ops.swapDays(to, from);
+      toast('Byttet tilbake');
+      if (main.querySelector('[data-page="uke"]')) {
+        renderUke();
+        focusEl('[data-action="swap-start"][data-date="' + from + '"]', '#day-' + from);
+      } else if (!isFormRoute()) route();
+    } });
+  }
+  function focusEl() {
+    for (var i = 0; i < arguments.length; i++) {
+      var el = arguments[i] && main.querySelector(arguments[i]);
+      if (el) { try { el.focus({ preventScroll: false }); } catch (x) { el.focus(); } return el; }
+    }
+    return null;
+  }
+  function startSwap(d) {
+    ui.swap = { from: d, sig: dayEntry(d).sig };
+    renderUke();
+    focusEl('[data-action="swap-to"]');
+  }
+  function cancelSwap(focusBack) {
+    if (!ui.swap) return;
+    var d = ui.swap.from;
+    ui.swap = null;
+    renderUke();
+    if (focusBack) focusEl('[data-action="swap-start"][data-date="' + d + '"]', '#day-' + d);
+  }
+
   var ops = {
     saveRecipe: function (r, isNew) {
       if (isNew) state.recipes.push(r);
@@ -642,11 +781,21 @@
       state.recipes = state.recipes.filter(function (x) { return x.id !== id; });
       usedDates.forEach(function (d) { state.week_plan[d] = null; });
       save();
+      var hit = takeSwapsFor(usedDates);
       remote(function (W, hid) {
+        writeSwapsPlain(hit, W, hid);   // v0.4.4
         var ps = [W.deleteRecipe(hid, id)];
         if (usedDates.length) ps.push(W.setDays(hid, usedDates.map(function (d) { return { date: d, recipe_id: null, oneoff: null }; })));
         return Promise.all(ps);
       });
+    },
+    // v0.4.4: bytt innholdet (rett / engangsmiddag / tom) mellom to dager. Lokalt straks; i husstanden som en
+    // transaksjon som bare bytter hvis dagene fortsatt er som denne telefonen så (se remoteSwap).
+    swapDays: function (a, b) {
+      var ca = dayEntry(a), cb = dayEntry(b);
+      putDay(a, cb); putDay(b, ca);
+      save();
+      if (hh && syncReady) remoteSwap(a, b, ca, cb);
     },
     // entries: [{ date, recipe_id, oneoff }]
     setDays: function (entries) {
@@ -655,7 +804,11 @@
         else { delete state.oneoffs[e.date]; state.week_plan[e.date] = e.recipe_id || null; }
       });
       save();
-      remote(function (W, hid) { return W.setDays(hid, entries); });
+      var hit = takeSwapsFor(entries.map(function (e) { return e.date; }));   // v0.4.4
+      remote(function (W, hid) {
+        writeSwapsPlain(hit, W, hid);
+        return W.setDays(hid, entries);
+      });
     },
     setChecks: function (week, map) {
       var c = state.checks[week] = state.checks[week] || {};
@@ -1028,8 +1181,26 @@
     var emptyWeekdays = dates.slice(0, 5).filter(function (d) {
       return !state.oneoffs[d] && !(state.week_plan[d] && recipeById(state.week_plan[d]));
     }).length;
+    // v0.4.4: byttemodus gjelder bare mens kilde-dagen er i uka som vises og fortsatt har middag.
+    if (ui.swap && (dates.indexOf(ui.swap.from) < 0 || !dinnerName(ui.swap.from))) ui.swap = null;
+    // Endret en annen telefon kilde-dagen mens vi valgte? Avbryt heller enn å bytte noe annet enn det som ble valgt.
+    if (ui.swap && dayEntry(ui.swap.from).sig !== ui.swap.sig) {
+      toast(dayName(ui.swap.from) + ' ble endret på en annen telefon – byttet er avbrutt', 4000);
+      ui.swap = null;
+    }
+    var swapFrom = ui.swap ? ui.swap.from : null;
+    var swapName = swapFrom ? dinnerName(swapFrom) : '';
+    var swapDay = swapFrom ? dayName(swapFrom).toLowerCase() : '';
+    // Knappen til høyre på hver dag: «Bytt» (dag med middag), i byttemodus «Bytt hit» / «Flytt hit» / «Avbryt».
+    function swapBtn(d, name) {
+      var dn = dayName(d).toLowerCase();
+      if (swapFrom === d) return '<button type="button" class="btn small swap-btn is-from" data-action="swap-cancel" data-date="' + d + '" aria-pressed="true" aria-label="Avbryt bytting av ' + esc(name) + '">Avbryt</button>';
+      if (swapFrom) return '<button type="button" class="btn small swap-btn swap-to" data-action="swap-to" data-date="' + d + '" data-testid="bytt-hit" aria-describedby="swap-hint" aria-label="' +
+        esc(name ? 'Bytt ' + swapName + ' (' + swapDay + ') med ' + name + ' (' + dn + ')' : 'Flytt ' + swapName + ' til ' + dn) + '">' + (name ? '⇅ Bytt hit' : '→ Flytt hit') + '</button>';
+      return name ? '<button type="button" class="btn small swap-btn" data-action="swap-start" data-date="' + d + '" data-testid="bytt" aria-label="Bytt ' + esc(name) + ' (' + dn + ') med en annen dag">⇅ Bytt</button>' : '';
+    }
 
-    var h = '<section class="page" data-page="uke">';
+    var h = '<section class="page' + (swapFrom ? ' swapping' : '') + '" data-page="uke">';
     h += weekNav(dates);
     h += '<div class="week-tools"><p class="summary" data-testid="uke-oppsummering">' + count + ' av 7 kvelder har middag</p>' +
       '<button type="button" class="btn small" data-action="fill-weekdays" data-testid="fyll"' + (emptyWeekdays ? '' : ' disabled') + '>Fyll man–fre</button></div>';
@@ -1039,26 +1210,29 @@
       var o = state.oneoffs[d];
       var sel = state.week_plan[d];
       var r = !o && sel ? recipeById(sel) : null;
-      h += '<li class="day' + (d === today ? ' today' : '') + (r || o ? '' : ' is-empty') + (o ? ' has-oneoff' : '') + '" data-date="' + d + '">' +
+      var dn = o ? o.name : r ? r.name : '';
+      h += '<li class="day' + (d === today ? ' today' : '') + (r || o ? '' : ' is-empty') + (o ? ' has-oneoff' : '') +
+        (swapFrom === d ? ' swap-from' : swapFrom ? ' swap-target' : '') + '" data-date="' + d + '">' +
         '<label for="day-' + d + '" class="day-label"><span class="dname">' + DAY_NAMES[i] + '</span>' +
         '<span class="ddate">' + shortDate(d) + (d === today ? ' · i dag' : '') + '</span></label>';
       if (o) {
         h += '<div class="oneoff"><span class="badge">Engangsmiddag</span>' +
           '<span class="oneoff-name">' + esc(o.name) + '</span>' +
           '<span class="day-meta">' + o.ingredients.length + (o.ingredients.length === 1 ? ' ingrediens' : ' ingredienser') + '</span></div>' +
-          '<div class="oneoff-actions"><a class="btn small" href="#uke/engang/' + d + '">Rediger</a>' +
-          '<button type="button" class="btn small" data-action="remove-oneoff" data-date="' + d + '">Fjern</button></div>';
+          '<div class="oneoff-actions">' + (swapFrom ? swapBtn(d, dn) : '<a class="btn small" href="#uke/engang/' + d + '">Rediger</a>' +
+          '<button type="button" class="btn small" data-action="remove-oneoff" data-date="' + d + '">Fjern</button>' + swapBtn(d, dn)) + '</div>';
       } else {
-        h += '<select id="day-' + d + '" class="day-select" data-date="' + d + '">' +
+        // v0.4.4: retter som er brukt en annen dag er ikke lenger sperret. Å velge en flytter den hit, og det som
+        // sto her (eller tomt) går til dagen den kom fra.
+        h += '<div class="day-row"><select id="day-' + d + '" class="day-select" data-date="' + d + '">' +
           '<option value="">Tom</option>';
         rs.forEach(function (x) {
           var usedIdx = usedBy[x.id];
           var takenElsewhere = usedIdx != null && usedIdx !== i;
-          h += '<option value="' + esc(x.id) + '"' + (r && r.id === x.id ? ' selected' : '') +
-            (takenElsewhere ? ' disabled' : '') + '>' + esc(x.name) +
-            (takenElsewhere ? ' (brukt ' + DAY_SHORT[usedIdx] + ')' : '') + '</option>';
+          h += '<option value="' + esc(x.id) + '"' + (r && r.id === x.id ? ' selected' : '') + '>' + esc(x.name) +
+            (takenElsewhere ? (r ? ' (bytt med ' : ' (flytt fra ') + DAY_SHORT[usedIdx] + ')' : '') + '</option>';
         });
-        h += '<option value="__oneoff__">＋ Engangsmiddag …</option></select>';
+        h += '<option value="__oneoff__">＋ Engangsmiddag …</option></select>' + swapBtn(d, dn) + '</div>';
         var meta = [];
         if (r) {
           if (r.minutes) meta.push(r.minutes + ' min');
@@ -1070,18 +1244,31 @@
       h += '</li>';
     });
     h += '</ol>';
+    if (swapFrom) {
+      h += '<div class="swap-bar" data-testid="bytte-linje"><p id="swap-hint" class="swap-hint">Velg dagen <b>' + esc(swapName) + '</b> (' + swapDay +
+        ') skal byttes med</p><button type="button" class="btn small" data-action="swap-cancel" data-testid="bytt-avbryt">Avbryt</button></div>';
+    }
     h += '<div class="row-actions"><a class="btn primary" href="#liste">Til handlelista →</a>' +
       (count ? '<button type="button" class="btn" data-action="clear-week" data-testid="tom-uka">Tøm uka</button>' : '') + '</div>';
     h += '</section>';
+    // Ny tegning (f.eks. endring fra en annen telefon) skal ikke miste tastaturfokus.
+    var ae = document.activeElement, keep = null;
+    if (ae && ae !== main && main.contains(ae)) {
+      keep = ae.id ? '#' + ae.id : ae.getAttribute('data-action') ? '[data-action="' + ae.getAttribute('data-action') + '"]' +
+        (ae.getAttribute('data-date') ? '[data-date="' + ae.getAttribute('data-date') + '"]' : '') : null;
+    }
     main.innerHTML = h;
+    if (keep) { var ke = main.querySelector(keep); if (ke) try { ke.focus({ preventScroll: true }); } catch (x) { ke.focus(); } }
   }
 
   function setDay(date, recipeId) {
+    ui.swap = null;
     if (recipeId === '__oneoff__') { location.hash = '#uke/engang/' + date; return; }
     if (recipeId) {
+      // v0.4.4: retten er brukt en annen dag i uka -> flytt den hit (bytt med det som står her).
       var dates = weekDates(ui.weekOffset);
       var clash = dates.filter(function (d) { return d !== date && state.week_plan[d] === recipeId && !state.oneoffs[d]; });
-      if (clash.length) { toast('Den retten er allerede brukt denne uka'); renderUke(); return; }
+      if (clash.length) { swapNow(clash[0], date, '#day-' + date); return; }
     }
     ops.setDays([{ date: date, recipe_id: recipeId || null, oneoff: null }]);
     renderUke();
@@ -1862,8 +2049,15 @@
       save();
       toast('Testdata er tilbakestilt');
       renderRetter();
+    } else if (a === 'swap-start') {
+      startSwap(btn.getAttribute('data-date'));
+    } else if (a === 'swap-cancel') {
+      cancelSwap(true);
+    } else if (a === 'swap-to') {
+      if (ui.swap) swapNow(ui.swap.from, btn.getAttribute('data-date'));
     } else if (a === 'week-prev' || a === 'week-next' || a === 'week-now') {
       // Én felles uke for Uke og Liste.
+      ui.swap = null;
       ui.weekOffset = a === 'week-now' ? 0 : ui.weekOffset + (a === 'week-next' ? 1 : -1);
       ui.weekTouched = true;
       route();
@@ -2031,7 +2225,13 @@
     }
   });
 
+  // v0.4.4: Esc avbryter byttemodus (fokus tilbake til «Bytt» på dagen).
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && ui.swap && !document.querySelector('.overlay:not([hidden])')) { e.preventDefault(); cancelSwap(true); }
+  });
+
   window.addEventListener('hashchange', function () {
+    ui.swap = null;
     closeBasisDialog(false);
     closeSheet('fast-dialog', false);
     ui.error = '';
