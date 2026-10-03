@@ -1,4 +1,4 @@
-/* Knaggen (arbeidsnavn Ukeshandel) v0.6.0 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Knaggen (arbeidsnavn Ukeshandel) v0.6.1 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -42,7 +42,10 @@
   var Sync = window.UkeshandelSync || null;
   var hh = null;             // husstandsinfo når vi er i husstandsmodus
   var syncReady = null;      // promise: SDK lastet, innlogget, medlemskap sjekket
-  var syncStatus = { pending: false, fromCache: true, failed: false };
+  var syncStatus = { pending: false, fromCache: true, failed: false, connecting: false };
+  // v0.6.1 (spec v0.6.1 punkt 5): mens husstanden kobler til første gang (ingen svar fra serveren ennå) vises
+  // «Kobler til …», ikke «Frakoblet». Kommer det ikke svar innen CONNECT_GRACE_MS, vises «Frakoblet» som før.
+  var CONNECT_GRACE_MS = 10000, connectTimer = null;
 
   /* ---------- Hjelpere ---------- */
 
@@ -142,8 +145,9 @@
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
 
-  // Toasten ligger over fanelinja nederst, så den aldri dekker nederste vare i lista.
-  // action: { label, run } gir en knapp (f.eks. «Angre»). Trykk på selve meldingen lukker toasten.
+  // v0.6.1: toasten ligger rett OVER fanelinja (ikke oppå den), så trykk på fanene alltid bytter fane.
+  // action: { label, run } gir en knapp (f.eks. «Angre»). Bare den knappen fanger trykk (CSS pointer-events);
+  // resten av toasten slipper trykk gjennom til det som ligger under.
   var toastTimer = null, toastAction = null;
   function toast(msg, ms, action) {
     var t = document.getElementById('toast');
@@ -173,9 +177,11 @@
     t.classList.remove('show', 'has-action');
   }
   document.getElementById('toast').addEventListener('click', function (e) {
-    var a = toastAction;
+    // Bare et trykk på selve «Angre»-knappen i en synlig toast angrer (spec v0.6.1 punkt 1).
+    var a = toastAction, t = document.getElementById('toast');
+    if (!a || !t.classList.contains('show') || !e.target.closest || !e.target.closest('.toast-act')) return;
     hideToast();
-    if (a && e.target.closest('.toast-act')) a.run();
+    a.run();
   });
 
   /* ---------- Lokal lagring og migrering ---------- */
@@ -318,6 +324,23 @@
     }
     return null;
   }
+  // v0.6.1 (spec v0.6.1 punkt 4): innebygd gjetteliste for vanlige varer som ikke står i egne retter, faste varer
+  // eller rettbiblioteket. Brukes etter knownIngredient (egne data vinner), før standarden Tørrvare.
+  // Appen har ingen egen meieriavdeling: meieri og pålegg går i «Kjøl»; ikke-mat går i «Hus» (vises som «Husholdning»).
+  var AISLE_GUESS = [
+    ['Hus', /^(tannkrem|tannbørste|tanntråd|munnskyll|bleie|bleier|våtserviett|serviett|tørkerull|kjøkkenrull|dopapir|toalettpapir|papirhåndkle|sjampo|shampo|balsam|såpe|håndsåpe|dusjsåpe|dusjgel|deodorant|deo|bodylotion|solkrem|barberblad|barberhøvel|bind|tampong|truseinnlegg|plaster|vatt|bomullspinner|q-tips|oppvaskmiddel|oppvasktabletter|maskinoppvask|vaskemiddel|tøyvask|tøymykner|flekkfjerner|klut|svamp|grillkull|tennvæske|søppelpose|bæreposer|fryseposer|plastfolie|aluminiumsfolie|bakepapir|matpapir|lyspærer|lyspære|batteri|batterier|stearinlys|telys|fyrstikker|kattesand|kattemat|hundemat)$/],
+    ['Hus', /(tannkrem|bleier|bleie|såpe|sjampo|vaskemiddel|oppvask|søppelpose|serviett|tørkerull|dopapir|batteri)/],
+    ['Kjøl', /^(yoghurt|yogurt|kefir|kulturmelk|cultura|skyr|kesam|kvarg|crème fraîche|creme fraiche|smøreost|kremost|brunost|geitost|gulost|norvegia|jarlsberg|ost|mozzarella|fetaost|feta|pålegg|leverpostei|servelat|salami|juice|appelsinjuice|eplejuice|smoothie|syrnet melk|sjokolademelk|iskaffe)$/],
+    ['Kjøl', /(yoghurt|kefir|skyr|kesam|kvarg|ost$|melk$|pålegg|postei)/],
+    ['Frys', /^(is|iskrem|isbiter|frossenpizza|frossen pizza|frosne bær|frosne grønnsaker|fiskegrateng|pommes frites)$/],
+    ['Frukt/grønt', /^(eple|epler|pære|pærer|appelsin|appelsiner|klementin|klementiner|mandarin|mandariner|druer|banan|kiwi|mango|melon|vannmelon|ananas|jordbær|bringebær|blåbær|plommer|nektarin|fersken|lime|salat|tomater|grønnkål|reddik|bønnespirer|urter)$/]
+  ];
+  function guessAisle(name) {
+    var n = normName(name);
+    if (!n) return null;
+    for (var i = 0; i < AISLE_GUESS.length; i++) if (AISLE_GUESS[i][1].test(n)) return AISLE_GUESS[i][0];
+    return null;
+  }
   function knownNamesDatalist() {
     var names = {};
     state.recipes.forEach(function (x) { x.ingredients.forEach(function (i) { names[normName(i.name)] = 1; }); });
@@ -364,6 +387,9 @@
     state = initialState || loadMirror(info.hid);
     swapBusy = false; lastDays = [];
     loadSwaps(info.hid);   // v0.4.4
+    syncStatus.fromCache = true; syncStatus.failed = false; syncStatus.connecting = true;
+    clearTimeout(connectTimer);
+    connectTimer = setTimeout(function () { syncStatus.connecting = false; renderSyncStatus(); }, CONNECT_GRACE_MS);
     renderSyncStatus();
     syncReady = Sync.init().then(function () {
       return Sync.isMember(hh.hid).then(function (m) {
@@ -377,7 +403,7 @@
       return Sync;
     });
     syncReady.catch(function (e) {
-      syncStatus.failed = true;
+      syncStatus.failed = true; syncStatus.connecting = false;
       renderSyncStatus();
       if (e && e.code === 'permission-denied') toast('Ingen tilgang til husstanden. Åpne invitasjonslenka på nytt.', 5000);
     });
@@ -454,6 +480,7 @@
       },
       status: function (st) {
         syncStatus.pending = st.pending; syncStatus.fromCache = st.fromCache; syncStatus.failed = false;
+        if (!st.fromCache) syncStatus.connecting = false;
         renderSyncStatus();
         processSwaps();   // v0.4.4: bytter gjort frakoblet kjøres når telefonen er tilkoblet igjen
       },
@@ -476,7 +503,8 @@
     var offline = !navigator.onLine || syncStatus.fromCache || syncStatus.failed;
     var pending = syncStatus.pending || swapOverlays.length > 0;   // v0.4.4: bytter i køen
     var txt, cls;
-    if (offline) { txt = pending ? 'Frakoblet · lagres senere' : 'Frakoblet'; cls = 'off'; }
+    if (offline && navigator.onLine && !syncStatus.failed && syncStatus.connecting) { txt = 'Kobler til …'; cls = 'connecting'; }
+    else if (offline) { txt = pending ? 'Frakoblet · lagres senere' : 'Frakoblet'; cls = 'off'; }
     else if (pending) { txt = 'Lagrer …'; cls = 'pending'; }
     else { txt = 'Delt'; cls = 'ok'; }
     el.textContent = txt;
@@ -1274,8 +1302,8 @@
         '<button type="button" class="btn small" data-action="dismiss-share" data-testid="del-kort-nei">Ikke nå</button></div></aside>';
     }
     if (swapFrom) {
-      h += '<div class="swap-bar" data-testid="bytte-linje"><p id="swap-hint" class="swap-hint">Velg dagen <b>' + esc(swapName) + '</b> (' + swapDay +
-        ') skal byttes med</p><button type="button" class="btn small" data-action="swap-cancel" data-testid="bytt-avbryt">Avbryt</button></div>';
+      // v0.6.1 (spec v0.6.1 punkt 5): enklere tekst. Dagen som byttes er markert i lista.
+      h += '<div class="swap-bar" data-testid="bytte-linje"><p id="swap-hint" class="swap-hint">Trykk på dagen du vil bytte med</p><button type="button" class="btn small" data-action="swap-cancel" data-testid="bytt-avbryt">Avbryt</button></div>';
     }
     h += '<div class="row-actions"><a class="btn primary" href="#liste">Til handlelista →</a>' +
       (count ? '<button type="button" class="btn" data-action="clear-week" data-testid="tom-uka">Tøm uka</button>' : '') + '</div>';
@@ -1299,8 +1327,21 @@
       var clash = dates.filter(function (d) { return d !== date && state.week_plan[d] === recipeId && !state.oneoffs[d]; });
       if (clash.length) { swapNow(clash[0], date, '#day-' + date); return; }
     }
+    var before = dayEntry(date), oldName = dinnerName(date);
     ops.setDays([{ date: date, recipe_id: recipeId || null, oneoff: null }]);
     renderUke();
+    // v0.6.1 (spec v0.6.1 punkt 2): en rett som erstatter en planlagt rett gir toast med «Angre» (8 s), som ved bytte.
+    if (recipeId && oldName && before.sig && before.sig !== dayEntry(date).sig) replacedToast(date, before, oldName);
+  }
+  function replacedToast(date, before, oldName) {
+    var after = dayEntry(date).sig;
+    toast(oldName + ' på ' + dayName(date).toLowerCase() + ' er byttet ut', UNDO_MS, { label: 'Angre', run: function () {
+      if (dayEntry(date).sig !== after) { toast('Kan ikke angre – uka er endret siden'); return; }
+      ops.setDays([{ date: date, recipe_id: before.recipe_id, oneoff: before.oneoff }]);
+      toast(oldName + ' er tilbake');
+      if (main.querySelector('[data-page="uke"]')) { renderUke(); focusEl('#day-' + date); }
+      else if (!isFormRoute()) route();
+    } });
   }
 
   // v0.4.5 (spec v0.4 punkt 5): smartere «Fyll man–fre». Ren funksjon (tilfeldigheten sendes inn), brukt av
@@ -1581,7 +1622,8 @@
       if (!byBase[base]) { byBase[base] = {}; order.push(base); }
       byBase[base][u] = round3((byBase[base][u] || 0) + Number(e.qty));
     });
-    return order.map(function (base) { return U.plan(nn, base, byBase[base], 0).text; }).join(' + ');
+    // v0.6.1: kjøkkenmål i basisvinduet («3 dl»), ikke pakninger.
+    return order.map(function (base) { return U.plan(nn, base, byBase[base], 0, true).text; }).join(' + ');
   }
 
   // v0.4.3: én samlet melding øverst på Liste.
@@ -1936,12 +1978,13 @@
   function adjustItem(key, dir) {
     var it = currentItems().filter(function (i) { return i.key === key; })[0];
     if (!it) return;
-    // +/- tar utgangspunkt i det som kjøpes: én pakning mer/mindre for kjente varer (7 dl melk → 1 l → «+» → 2 × 1 l),
+    // +/- tar utgangspunkt i det som kjøpes: neste mulige kjøp for kjente varer (v0.6.1: 7 dl melk → 1 l → «+» → 1,75 l → «+» → 2 l),
     // ellers ett steg i visningsenheten (100 g, 0,5 kg, 1 dl, 0,5 l, 1 ss, 1 stk …).
     var pl = it.plan;
     var step = pl ? pl.step : 1;
     var cur = pl ? pl.buy : 0;
     var next = dir > 0 ? cur + step : Math.max(0, cur - step);
+    if (pl && pl.sizes) next = U.nextBuy(pl, dir);   // v0.6.1: neste mulige kjøp (én pakningsstørrelse)
     // Runder til nærmeste steg når vi går fra et «skjevt» tall (f.eks. 0,5 dl -> 1 dl).
     var ratio = round3(cur / step);
     if (!(pl && pl.packs) && ratio !== Math.round(ratio)) next = round3((dir > 0 ? Math.ceil(ratio) : Math.floor(ratio)) * step);
@@ -2228,7 +2271,7 @@
           document.getElementById('ai-aisle').value = normAisle(k.aisle);
         }
       } else if (!row && !document.getElementById('ai-aisle').hasAttribute('data-picked')) {
-        document.getElementById('ai-aisle').value = 'Tørrvare';
+        document.getElementById('ai-aisle').value = guessAisle(t.value) || 'Tørrvare';   // v0.6.1
       }
       if (row) row.setAttribute('data-new', '0');
     } else if (t.id === 'ai-aisle') {

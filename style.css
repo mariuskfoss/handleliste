@@ -59,7 +59,8 @@ body {
   line-height: 1.4;
   color: var(--ink);
   background: var(--bg);
-  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 16px);
+  /* v0.6.1: + plass til toasten (48 + 8 px) over fanelinja, så nederste vare aldri dekkes når man har rullet helt ned. */
+  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 72px);
 }
 a { color: var(--brand); }
 h1, h2, h3 { margin: 0; line-height: 1.2; }
@@ -149,7 +150,8 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
 @keyframes suggest-in-r { from { transform: translateX(28px); opacity: .3; } to { transform: none; opacity: 1; } }
 @keyframes suggest-in-l { from { transform: translateX(-28px); opacity: .3; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .suggest-card, .suggest-card.from-right, .suggest-card.from-left { animation: none; transition: none; } }
-.back { text-decoration: none; font-weight: 600; white-space: nowrap; }
+/* v0.6.1: trykkflate 44 × 44 (negative marger, så toppen ikke blir høyere). */
+.back { text-decoration: none; font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; margin: -11px 0; }
 
 /* Skjema */
 .field { display: block; margin-bottom: 12px; }
@@ -182,7 +184,7 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .week-nav { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; }
 .week-title { flex: 1; text-align: center; }
 .week-title h2 { font-size: 19px; }
-.week-title .linkbtn { display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px; margin: -8px 0 -10px; }
+.week-title .linkbtn { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; margin: -10px 0 -12px; }   /* v0.6.1: 44 px */
 .summary { text-align: center; color: var(--muted); font-size: 14px; margin: 0 0 10px; }
 .days { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .day {
@@ -201,7 +203,7 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .left { font-weight: 700; color: var(--brand); white-space: nowrap; }
 .list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
 .list-foot { display: flex; justify-content: center; margin: 22px 0 4px; }
-.list-foot .btn.small { min-height: 40px; color: var(--muted); font-weight: 600; }
+.list-foot .btn.small { min-height: 44px; color: var(--muted); font-weight: 600; }
 .list-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .list-actions .btn.primary { flex: 1; }
 .aisle {
@@ -255,11 +257,14 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .tabs a.active { color: var(--brand); }
 .tabs a.active .ico { filter: none; opacity: 1; }
 
-/* v0.3.2: toasten legger seg over fanelinja (ikke over lista), så nederste vare aldri dekkes. */
+/* v0.6.1 (spec v0.6.1 punkt 1): toasten ligger OVER fanelinja (8 px luft), aldri oppå fanene. Før lå den oppå
+ * fanelinja (v0.3.2), og «Angre» (som må fange trykk) lå da midt over Liste-fanen – et trykk på Liste angret byttet.
+ * Selve meldingen slipper fortsatt trykk gjennom; bare «Angre» fanger trykk. */
 .toast {
-  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
-  transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none;
-  background: var(--inv-bg); color: var(--inv-ink); padding: 0 16px; min-height: 48px; max-height: calc(var(--nav-h) - 12px);
+  position: fixed; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 8px);
+  /* Glir inn bare 6 px (mindre enn luften på 8 px), så den aldri – heller ikke under animasjonen – ligger oppå fanene. */
+  transform: translateX(-50%) translateY(6px); opacity: 0; pointer-events: none;
+  background: var(--inv-bg); color: var(--inv-ink); padding: 0 16px; min-height: 48px;
   border-radius: 14px; font-size: 14px; line-height: 1.3; box-shadow: var(--shadow);
   display: flex; align-items: center; gap: 12px; justify-content: center;
   transition: opacity .2s, transform .2s; z-index: 20; width: max-content; max-width: calc(100vw - 24px); text-align: center;
@@ -281,14 +286,14 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 /* v0.1 */
 a { color: var(--brand); }
 .btn:disabled { opacity: .45; cursor: default; }
-.btn.small { min-height: 38px; padding: 0 12px; font-size: 14px; }
+.btn.small { min-height: 44px; padding: 0 12px; font-size: 14px; }
 .week-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
 .week-tools .summary { margin: 0; text-align: left; }
 .notice { background: var(--brand-soft); color: var(--ink); border: 1px solid var(--brand-soft-line); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 0 0 10px; }
 .day-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 0; }
 .day-foot .day-meta { margin-top: 6px; }
 /* v0.3.2: minst 40 px treffflate uten å endre kortet: flata strekker seg nedover (ikke opp over nedtrekksmenyen). */
-.day-foot .linkbtn { display: inline-flex; align-items: flex-start; box-sizing: border-box; min-height: 40px; padding: 6px 0 16px 16px; margin-bottom: -16px; font-size: 13px; line-height: 18px; white-space: nowrap; }
+.day-foot .linkbtn { display: inline-flex; align-items: flex-start; box-sizing: border-box; min-height: 44px; padding: 6px 0 20px 16px; margin-bottom: -20px; font-size: 13px; line-height: 18px; white-space: nowrap; }
 .day.has-oneoff { border-style: dashed; border-color: var(--line-strong); }
 .oneoff { display: flex; flex-direction: column; gap: 2px; }
 .oneoff-name { font-weight: 650; font-size: 17px; }
@@ -303,7 +308,7 @@ a { color: var(--brand); }
 .add-item summary { padding: 12px 0; font-weight: 700; color: var(--brand); cursor: pointer; }
 .item-add-form { display: grid; gap: 8px; padding-bottom: 12px; }
 .ai-row { display: grid; grid-template-columns: 64px 1fr 1.4fr; gap: 6px; }
-.check { display: flex; align-items: center; gap: 10px; font-size: 15px; min-height: 36px; }
+.check { display: flex; align-items: center; gap: 10px; font-size: 15px; min-height: 44px; }
 .check input { width: 22px; height: 22px; accent-color: var(--brand); }
 
 .item { display: flex; align-items: center; }
@@ -325,7 +330,7 @@ select option:disabled { color: var(--line-strong); }
 .form-actions.plain { position: static; margin: 12px 0; padding: 0; border: 0; background: none; align-items: center; }
 [data-page="husstand"] p, [data-page="join"] p { margin: 0 0 12px; }
 #share-link { font-size: 14px; color: var(--muted); }
-.footer-tools .linkbtn { display: inline-block; }
+.footer-tools .linkbtn { display: inline-flex; align-items: center; min-height: 44px; }   /* v0.6.1: 44 px */
 
 /* v0.4.2 */
 .week-tools .btn.small { min-height: 44px; }

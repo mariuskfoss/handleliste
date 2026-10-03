@@ -1,25 +1,30 @@
-# Ukeshandel (v0)
+# Knaggen
 
-Ukeplan for middager + handleliste for én husstand. Ren statisk side (HTML/CSS/JS), ingen byggesteg, ingen backend, ingen eksterne avhengigheter. Data lagres i nettleseren (`localStorage`, nøkkel `ukeshandel:v1`).
+Ukeplan for middager og handleliste, delt i husstanden. Statisk nettside (HTML/CSS/JS) uten byggesteg.
+
+## Slik virker den
+- **Uke** – velg middag for hver dag, eller la «Fyll man–fre» foreslå raske retter. Dager kan byttes, og endringer kan angres.
+- **Liste** – handlelista lages av ukas middager, faste varer og det du legger til selv. Like varer slås sammen og rundes opp til hele pakninger, gruppert etter avdeling i butikken.
+- **Retter** – egne retter og forslag fra et bibliotek med norske hverdagsretter.
+- **Del med husstanden** – valgfritt. En delingslenke gjør at flere telefoner ser samme uke og liste (ingen konto).
+
+Uten deling lagres alt bare i nettleseren på telefonen. Appen virker også uten nett (service worker).
 
 ## Kjøre lokalt
 
 ```sh
-cd app
 python3 -m http.server 8000
 # åpne http://localhost:8000
 ```
 
-Kan hostes som vanlige statiske filer (hvilken som helst HTTPS-statisk hosting). `index.html` er inngangen.
-
-## Sider
-- **Retter** – legg til / rediger / slett retter (navn, minutter, ingredienser, merknad). «Tilbakestill testdata» nederst.
-- **Uke** – man–søn for valgt uke, velg rett eller «Tom». Samme rett kan ikke brukes to ganger i samme uke. Pilene bytter uke.
-- **Liste** – generert fra ukas middager + faste husvarer. Like varer (samme navn + enhet) summeres, gruppert Frukt/grønt → Kjøl → Frys → Tørrvare → Hus. Avkryssing lagres. «Kopier som tekst» kopierer ukryssede varer. Faste husvarer redigeres nederst på Liste.
+`index.html` er inngangen. Siden kan ligge på hvilken som helst statisk HTTPS-hosting.
 
 ## Filer
-- `index.html` – skall og bunnmeny
-- `style.css` – stil (mobil først)
-- `app.js` – logikk, lagring, visning
-- `seed.js` – testdata (12 retter, 8 faste husvarer)
-- `tests/` – Playwright-skript brukt til testing (krever `npm i playwright-core` og en Chrome/Chromium; forventer server på port 8765)
+- `index.html` – skall, bunnmeny og metadata
+- `manifest.webmanifest`, `icons/` – navn og ikoner for hjemskjerm og nettleser
+- `style.css` – utseende (lys og mørk modus)
+- `app.js` – logikk og visning
+- `units.js` – enheter og pakningsstørrelser på handlelista
+- `seed.js`, `library.js` – startdata og rettbibliotek
+- `sync.js`, `firebase-config.js` – deling i husstanden
+- `sw.js` – frakoblet bruk

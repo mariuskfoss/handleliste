@@ -1,4 +1,4 @@
-/* Knaggen (arbeidsnavn Ukeshandel) v0.6.0 — enheter og pakninger på handlelista (v0.4.1, enhetsnormalisering v0.4.2, basisvarer v0.4.3).
+/* Knaggen (arbeidsnavn Ukeshandel) v0.6.1 — enheter og pakninger på handlelista (v0.4.1, enhetsnormalisering v0.4.2, basisvarer v0.4.3).
  * Rene funksjoner (ingen DOM), lastes før app.js og kan testes i Node.
  *
  * Regler:
@@ -10,6 +10,11 @@
  *     - ellers til et fornuftig steg: ≥ 1 kg → 0,1 kg, ≥ 1 l → 0,1 l, dl → 0,5 dl, stykkenheter → hele.
  *     Skje-mål alene (ss/ts) er ikke noe man kjøper; de vises nøyaktig («1 ss + 1 ts»).
  *  3. Det faktiske behovet vises i liten tekst når det avviker («behov 7 dl»).
+ *  4. v0.6.1 (spec v0.6.1 punkt 3): én enkel pakkeoppskrift – bare én pakningsstørrelse per vare («Melk 3 l»,
+ *     «3 × 250 g»), aldri blandet («1,75 l + 2 × 1 l»). Pakninger på 1 l / 1 kg vises som totalen («3 l»).
+ *     Varer som står i dl/ss/ts i oppskriftene (mel, ris, sukker, soyasaus, olje, krydder …) får pakningsstørrelse
+ *     via VOLUME_GOODS («Hvetemel 1 kg · behov 3 dl»). Andre varer som bare står i ss/ts blir «1 pk».
+ *     Linjenøklene (navn|ml) og omregningen er uendret, så avkrysninger og justeringer beholdes.
  */
 (function (root) {
   'use strict';
@@ -36,6 +41,40 @@
     { names: ['egg'], base: 'stk', packs: [6, 12], conv: { pk: 12 } },
     { names: ['hvitløk'], base: 'stk', packs: [1], conv: { fedd: 0.1 } }
   ];
+  // v0.6.1: varer som står i volum (ml/dl/ss/ts) i oppskriftene, men kjøpes i pakning. Linja beholder grunnenheten ml
+  // (samme nøkkel som før); bare kjøpet regnes om. sale: enheten pakningen selges i (g, ml eller pk),
+  // per: hvor mye av sale-enheten 1 ml tilsvarer (g per ml for mel o.l., pk per ml for krydder).
+  var VOLUME_GOODS = [
+    { names: ['hvetemel', 'byggmel', 'rugmel', 'grovt mel', 'sammalt hvete', 'speltmel'], sale: 'g', packs: [1000, 2000], per: 0.6 },
+    { names: ['potetmel', 'maismel', 'maisenna'], sale: 'g', packs: [500], per: 0.7 },
+    { names: ['griljermel', 'strømel', 'panko'], sale: 'g', packs: [200], per: 0.4 },
+    { names: ['sukker', 'strøsukker'], sale: 'g', packs: [1000], per: 0.85 },
+    { names: ['brunt sukker', 'melis'], sale: 'g', packs: [500], per: 0.6 },
+    { names: ['ris', 'basmatiris', 'jasminris', 'langkornet ris', 'parboiled ris', 'risottoris', 'grøtris'], sale: 'g', packs: [1000], per: 0.85 },
+    { names: ['couscous', 'bulgur', 'quinoa'], sale: 'g', packs: [500], per: 0.8 },
+    { names: ['røde linser', 'linser', 'grønne linser'], sale: 'g', packs: [500], per: 0.85 },
+    { names: ['havregryn', 'lettkokte havregryn'], sale: 'g', packs: [1000], per: 0.35 },
+    { names: ['cornflakes'], sale: 'g', packs: [500], per: 0.13 },
+    { names: ['tomatpuré'], sale: 'g', packs: [200], per: 1.1 },
+    { names: ['peanøttsmør'], sale: 'g', packs: [350], per: 1.05 },
+    { names: ['sennep'], sale: 'g', packs: [490], per: 1.05 },
+    { names: ['rød karripasta', 'grønn karripasta', 'gul karripasta', 'karripasta'], sale: 'g', packs: [110], per: 1 },
+    { names: ['soyasaus', 'lys soyasaus', 'mørk soyasaus', 'østerssaus', 'sesamolje'], sale: 'ml', packs: [150], per: 1 },
+    { names: ['fiskesaus', 'limejuice', 'sitronsaft', 'sitronjuice'], sale: 'ml', packs: [200], per: 1 },
+    { names: ['olje', 'matolje', 'olivenolje', 'rapsolje', 'solsikkeolje', 'nøytral olje', 'eddik'], sale: 'ml', packs: [500], per: 1 },
+    { names: ['balsamicoeddik'], sale: 'ml', packs: [250], per: 1 },
+    { names: ['salt', 'havsalt', 'flaksalt'], sale: 'pk', packs: [1], per: 1 / 500 },
+    { names: ['pepper', 'sort pepper', 'kvernet pepper', 'hel sort pepper', 'hvit pepper', 'karri', 'karripulver', 'paprikapulver',
+      'røkt paprikapulver', 'chilipulver', 'chiliflak', 'kajennepepper', 'kanel', 'spisskummen', 'timian', 'oregano', 'tørket basilikum',
+      'tørket timian', 'tørket oregano', 'rosmarin', 'laurbærblad', 'muskat', 'muskatnøtt', 'nellik', 'kardemomme', 'ingefærpulver',
+      'hvitløkspulver', 'løkpulver', 'allehånde', 'gurkemeie', 'malt koriander', 'garam masala', 'sesamfrø', 'bakepulver', 'natron',
+      'tørrgjær', 'vaniljesukker', 'tacokrydder', 'fajitaskrydder'], sale: 'pk', packs: [1], per: 1 / 100 }
+  ];
+  // Andre varer som bare står i ss/ts: én pakning (1 pk per 250 ml).
+  var SPOON_GOOD = { sale: 'pk', packs: [1], per: 1 / 250 };
+  var VOLS = {};
+  VOLUME_GOODS.forEach(function (e) { e.names.forEach(function (n) { VOLS[n] = e; }); });
+
   // Buljong: skjeer er konsentrat/pulver, liter er ferdig buljong. Samme linje, men delene vises hver for seg.
   var SEPARATE_SPOONS = /(buljong|kraft)$/;
 
@@ -102,24 +141,29 @@
   }
   function factorFor(nn, unit) { var c = conversion(nn, unit); return c ? c.factor : 1; }
 
-  // Minst mulig til overs (≥ behov); ved likhet færrest pakninger. Gir liste med størrelser (størst først).
+  // v0.6.1: én pakningsstørrelse (enkel pakkeoppskrift): minst mulig til overs (≥ behov); ved likhet færrest
+  // pakninger. Gir liste med størrelser, f.eks. [1000, 1000, 1000] for 2,75 l melk.
   function packCombo(need, sizes) {
-    sizes = sizes.slice().sort(function (a, b) { return b - a; });
     if (need <= 1e-9) return [];
     var best = null;
-    function rec(i, left, picked, total) {
-      if (i === sizes.length - 1) {
-        var n = Math.max(0, Math.ceil(left / sizes[i] - 1e-9));
-        var combo = picked.concat(Array(n).fill(sizes[i]));
-        var tot = round3(total + n * sizes[i]);
-        if (!best || tot < best.total - 1e-9 || (Math.abs(tot - best.total) < 1e-9 && combo.length < best.combo.length)) best = { total: tot, combo: combo };
-        return;
-      }
-      var max = Math.ceil(left / sizes[i] - 1e-9);
-      for (var k = 0; k <= max; k++) rec(i + 1, round3(left - k * sizes[i]), picked.concat(Array(k).fill(sizes[i])), round3(total + k * sizes[i]));
-    }
-    rec(0, need, [], 0);
-    return best.combo;
+    sizes.slice().sort(function (a, b) { return b - a; }).forEach(function (sz) {
+      var n = Math.max(1, Math.ceil(need / sz - 1e-9)), tot = round3(n * sz);
+      if (!best || tot < best.total - 1e-9) best = { total: tot, n: n, s: sz };
+    });
+    return Array(best.n).fill(best.s);
+  }
+
+  // v0.6.1: +/- på en pakningsvare går til neste mulige kjøp (n × én størrelse) over/under det som kjøpes nå, så
+  // + og − alltid går tilbake til samme mengde (3,5 l → + → 4 l → − → 3,5 l; 1 kg → + → 2 kg → − → 1 kg).
+  // Gir neste kjøp i grunnenhet, 0 når det ikke finnes noe mindre kjøp.
+  // pl: resultatet fra plan() for en pakningsvare; regnes i salgsenheten (g/ml/pk) for å unngå avrundingsfeil.
+  function nextBuy(pl, dir) {
+    var per = pl.sale ? pl.sale.per : 1, sizes = pl.sizes, cur = round3(pl.buy * per), best = dir > 0 ? Infinity : 0;
+    sizes.forEach(function (sz) {
+      if (dir > 0) best = Math.min(best, round3((Math.floor(cur / sz + 1e-4) + 1) * sz));
+      else { var m = Math.ceil(cur / sz - 1e-4) - 1; if (m > 0) best = Math.max(best, round3(m * sz)); }
+    });
+    return round3(best / per);
   }
 
   function sizeText(v, base) {
@@ -135,6 +179,7 @@
     });
     return groups.map(function (g) {
       if (base !== 'ml' && base !== 'g' && g.s === 1) return fmtU(g.n, base);        // 2 stk, ikke «2 × 1 stk»
+      if ((base === 'ml' || base === 'g') && g.s === 1000) return sizeText(g.n * 1000, base);   // v0.6.1: «3 l», ikke «3 × 1 l»
       return (g.n > 1 ? g.n + ' × ' : '') + sizeText(g.s, base);
     }).join(' + ');
   }
@@ -165,7 +210,8 @@
 
   /* Plan for én linje. parts: { enhet: mengde } slik ingrediensene står (før omregning), adj: +/- i grunnenhet.
    * Gir { need, buy, text, needText, showNeed, step, packs, adjText(d) }, alt i grunnenhet. */
-  function plan(nn, base, parts, adj) {
+  // kitchen: bare kjøkkenmål, uten pakninger fra VOLUME_GOODS (brukes i basisvinduet: «hvetemel 3 dl»).
+  function plan(nn, base, parts, adj, kitchen) {
     adj = adj || 0;
     var units = Object.keys(parts).filter(function (u) { return parts[u] != null; });
     var sum = 0;
@@ -176,7 +222,15 @@
       var combo = packCombo(need, p.packs);
       var buy = round3(combo.reduce(function (a, b) { return a + b; }, 0));
       r = { buy: buy, text: need > 0 ? packsText(combo, base) : sizeText(0, base).replace(/^0 dl$/, '0 l'),
-        needText: sizeText(need, base), step: Math.min.apply(null, p.packs), packs: combo, unit: base };
+        needText: sizeText(need, base), step: Math.min.apply(null, p.packs), packs: combo, sizes: p.packs.slice(), unit: base };
+    } else if (base === 'ml' && !kitchen && (VOLS[nn] || (only(units, ['ss', 'ts']) && need > 0))) {
+      // v0.6.1: kjøpes i pakning («Hvetemel 1 kg · behov 3 dl», «Soyasaus 1,5 dl · behov 3 ss», «Karri 1 pk»).
+      var g = VOLS[nn] || SPOON_GOOD;
+      var vc = packCombo(round3(need * g.per), g.packs);
+      var vbuy = round3(vc.reduce(function (a, b) { return a + b; }, 0));
+      r = { buy: round3(vbuy / g.per), text: need > 0 ? packsText(vc, g.sale) : (g.sale === 'pk' ? '0 pk' : sizeText(0, g.sale).replace(/^0 dl$/, '0 l')),
+        needText: only(units, ['ss', 'ts']) ? spoonText(need) : sizeText(need, 'ml'), step: round3(Math.min.apply(null, g.packs) / g.per),
+        packs: vc, sizes: g.packs.slice(), unit: g.sale, sale: g };
     } else if (base === 'ml') {
       var spoonMl = 0, liquidMl = 0;
       units.forEach(function (u) { if (u === 'ss' || u === 'ts') spoonMl += parts[u] * UNIT[u][1]; else liquidMl += parts[u] * UNIT[u][1]; });
@@ -209,6 +263,7 @@
     r.showNeed = need > 0 && r.buy > need + 1e-9;
     r.adjText = function (d) {
       var s = d > 0 ? '+' : '−', a = Math.abs(d);
+      if (r.sale) return s + (r.sale.sale === 'pk' ? fmtU(Math.round(a * r.sale.per * 100) / 100, 'pk') : sizeText(round3(a * r.sale.per), r.sale.sale));
       if (base === 'ml') return s + (r.unit === 'ss' ? spoonText(a) : sizeText(a, 'ml'));
       if (base === 'g') return s + sizeText(a, 'g');
       return s + fmtU(a, base);
@@ -217,7 +272,7 @@
   }
 
   root.UkeshandelUnits = {
-    UNIT: UNIT, PACK_TABLE: PACK_TABLE, BASIS_TABLE: BASIS_TABLE, isBasisName: isBasisName, isBasis: isBasis, packFor: packFor, normUnit: normUnit, conversion: conversion, keyFor: keyFor,
-    factorFor: factorFor, packCombo: packCombo, plan: plan, spoonText: spoonText, sizeText: sizeText
+    UNIT: UNIT, PACK_TABLE: PACK_TABLE, VOLUME_GOODS: VOLUME_GOODS, BASIS_TABLE: BASIS_TABLE, isBasisName: isBasisName, isBasis: isBasis, packFor: packFor, normUnit: normUnit, conversion: conversion, keyFor: keyFor,
+    factorFor: factorFor, packCombo: packCombo, nextBuy: nextBuy, plan: plan, spoonText: spoonText, sizeText: sizeText
   };
 })(typeof window !== 'undefined' ? window : globalThis);
