@@ -201,11 +201,7 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 
 /* Liste */
 .left { font-weight: 700; color: var(--brand); white-space: nowrap; }
-.list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
-.list-foot { display: flex; justify-content: center; margin: 22px 0 4px; }
-.list-foot .btn.small { min-height: 44px; color: var(--muted); font-weight: 600; }
-.list-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
-.list-actions .btn.primary { flex: 1; }
+/* v0.6.2: .list-head, .list-foot og .list-actions er fjernet (kompakt listetopp, se nederst). */
 .aisle {
   font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
   margin: 16px 2px 6px;
@@ -253,15 +249,25 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
   text-decoration: none; color: var(--muted); font-size: 13px; font-weight: 600;
   -webkit-tap-highlight-color: transparent;
 }
-.tabs a .ico { font-size: 20px; filter: grayscale(1); opacity: .6; }
 .tabs a.active { color: var(--brand); }
-.tabs a.active .ico { filter: none; opacity: 1; }
+/* v0.6.2 (spec v0.6.2 punkt 3): faneikoner fra Merkevare (SVG inline, arver farge). Erstatter emoji (📖 📅 🛒).
+ * Inaktiv: --muted. Aktiv: --brand, messingkule (--accent) og en strek øverst, så aktiv fane synes også uten farge. */
+.tabs a { position: relative; }
+.tabs a .ico { display: block; width: 24px; height: 24px; flex: none; }
+.tabs a .ico .ball { fill: currentColor; }
+.tabs a.active .ico .ball { fill: var(--accent); }
+.tabs a.active::before {
+  content: ""; position: absolute; top: -1px; left: 50%; width: 32px; height: 3px; margin-left: -16px;
+  border-radius: 0 0 3px 3px; background: var(--brand);
+}
+.tabs a:focus-visible { outline: 2px solid var(--brand); outline-offset: -4px; border-radius: 10px; }
 
 /* v0.6.1 (spec v0.6.1 punkt 1): toasten ligger OVER fanelinja (8 px luft), aldri oppå fanene. Før lå den oppå
  * fanelinja (v0.3.2), og «Angre» (som må fange trykk) lå da midt over Liste-fanen – et trykk på Liste angret byttet.
  * Selve meldingen slipper fortsatt trykk gjennom; bare «Angre» fanger trykk. */
 .toast {
-  position: fixed; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 8px);
+  position: fixed; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 8px + var(--toast-lift, 0px));
+  /* v0.6.2: --toast-lift (settes i app.js) løfter toasten over lagre-linja i skjemaene, så den aldri dekker «Lagre». */
   /* Glir inn bare 6 px (mindre enn luften på 8 px), så den aldri – heller ikke under animasjonen – ligger oppå fanene. */
   transform: translateX(-50%) translateY(6px); opacity: 0; pointer-events: none;
   background: var(--inv-bg); color: var(--inv-ink); padding: 0 16px; min-height: 48px;
@@ -304,8 +310,6 @@ a { color: var(--brand); }
 .seg button { min-height: 44px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
 .seg button.on { background: var(--brand-soft); color: var(--brand); }
 
-.add-item { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 0 12px; margin: 8px 0 4px; }
-.add-item summary { padding: 12px 0; font-weight: 700; color: var(--brand); cursor: pointer; }
 .item-add-form { display: grid; gap: 8px; padding-bottom: 12px; }
 .ai-row { display: grid; grid-template-columns: 64px 1fr 1.4fr; gap: 6px; }
 .check { display: flex; align-items: center; gap: 10px; font-size: 15px; min-height: 44px; }
@@ -340,15 +344,6 @@ select option:disabled { color: var(--line-strong); }
 .ing-top { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
 .ing-basis { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 10px; font-size: 14px; color: var(--muted); cursor: pointer; }
 .ing-basis input { width: 20px; height: 20px; margin: 0; accent-color: var(--brand); }
-.basis-box {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 44px; box-sizing: border-box;
-  margin: 0 0 10px; padding: 10px 12px; text-align: left; border: 1px solid var(--line); border-radius: var(--radius);
-  background: var(--card); color: var(--ink); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.basis-box.todo { border-color: var(--brand); background: var(--brand-soft); }
-.basis-box:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-.basis-title { font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
-.basis-sub { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .basis-sheet { max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; box-sizing: border-box; }
 .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .sheet-head h3 { margin: 0; }
@@ -364,13 +359,6 @@ select option:disabled { color: var(--line-strong); }
 
 /* v0.4.3b: sortering Butikk/Kilde (erstatter filtervelgeren), faste varer per uke */
 .seg.sort { grid-template-columns: repeat(2, 1fr); }
-.fast-btn {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 48px; box-sizing: border-box;
-  margin: 8px 0 4px; padding: 10px 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
-  color: var(--brand); font: inherit; font-weight: 700; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
-}
-.fast-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
-.fast-count { flex: none; font-size: 13px; font-weight: 600; color: var(--muted); }
 .src-head { text-transform: none; letter-spacing: 0; font-size: 14px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
 .src-empty { margin: 0 2px; font-size: 13px; color: var(--muted); }
 .staple-row:not(.add) { grid-template-columns: 1fr 52px 64px 44px; grid-template-areas: "n q u d" "s s s s"; }
@@ -409,3 +397,80 @@ select option:disabled { color: var(--line-strong); }
 .share-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .share-actions .btn.small { min-height: 44px; }
 .share-actions .btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* ===== Knaggen v0.6.2: velkomstkort ved første åpning (spec v0.6.2 punkt 1) =====
+ * Øverst i Uke, bare før første middag er lagt inn. Kan lukkes (×), og blir borte for godt når den er lukket eller første rett er valgt. */
+.welcome {
+  position: relative; margin: 0 0 10px; padding: 12px 48px 12px 14px;
+  background: var(--brand-soft); border: 1px solid var(--brand-soft-line); border-radius: var(--radius);
+}
+.welcome-t { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.3; color: var(--ink); }
+.welcome-tag { margin: 4px 0 0; font-size: 13px; color: var(--muted); }
+.welcome-x {
+  position: absolute; top: 2px; right: 2px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px;
+  background: none; color: var(--muted); font: inherit; font-size: 22px; line-height: 1; cursor: pointer;
+}
+.welcome-x:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+/* ===== Knaggen v0.6.2: kompakt listetopp (spec v0.6.2 punkt 2) =====
+ * Legg til nederst i style.css. Bruker bare eksisterende variabler (palett fra merkevare.md).
+ * Struktur (se README): .week-nav (med «N middager · N igjen» i undertittelen)
+ *                       .list-tools  = sortering + [＋ Legg til vare] + [⋯ Mer]
+ *                       .basis-strip = bare når basisvarer ikke er avgjort for uka
+ */
+#list-section .week-nav { margin: 0 0 6px; }
+#list-section .week-title .sub { display: block; font-size: 14px; }
+#list-section .week-title .left { font-weight: 700; color: var(--brand); }
+
+.list-tools { display: flex; align-items: stretch; gap: 6px; margin: 0 0 6px; }
+.list-tools .seg.sort { flex: 1; min-width: 0; margin: 0; padding: 0; gap: 0; overflow: hidden; }
+.list-tools .seg.sort button { min-height: 44px; border-radius: 0; }
+.list-tools .seg.sort button + button { border-left: 1px solid var(--line); }
+.list-tools .seg.sort button.on { background: var(--brand-soft); color: var(--brand); box-shadow: inset 0 -3px 0 var(--brand); } /* strek = ikke bare farge */
+.tool-btn {
+  flex: none; width: 46px; min-height: 46px; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card); color: var(--brand); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.tool-btn svg { width: 22px; height: 22px; }
+.tool-btn[aria-expanded="true"] { background: var(--brand-soft); border-color: var(--brand); }
+.tool-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* Basisvarer som ikke er avgjort: én slank linje (44 px). Når de er avgjort, ligger de bare i «Mer». */
+.basis-strip {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin: 0 0 6px; padding: 0 12px;
+  border: 1px solid var(--brand-soft-line); border-radius: 10px; background: var(--brand-soft); color: var(--ink);
+  font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.basis-strip .bs-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.basis-strip .bs-go { flex: none; color: var(--brand); font-weight: 700; }
+
+/* Tettere avdelinger og rader – trykkflatene er fortsatt ≥ 44 px (+/–) og raden ≥ 48 px. */
+#list-section .aisle { margin: 12px 2px 4px; }
+#list-section .list-tools + .aisle, #list-section .basis-strip + .aisle, #list-section .add-panel + .aisle { margin-top: 6px; }
+#list-section .item label { padding: 8px 12px; }
+
+/* «＋» åpner dagens skjema rett under verktøylinja (samme .item-add-form som før). */
+.add-panel { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; margin: 0 0 6px; }
+
+/* «⋯ Mer»: bunnark med de sjeldne handlingene (gjenbruker .overlay/.sheet). */
+.menu-rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; }
+.menu-rows li + li { border-top: 1px solid var(--line); }
+.menu-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 52px; padding: 0 14px;
+  background: none; border: 0; color: var(--ink); font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+}
+.menu-row .mr-meta { flex: none; font-size: 13px; font-weight: 600; color: var(--muted); }
+.menu-row:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+/* v0.6.2, App: tillegg til Merkevares CSS.
+ * Sjefen: den synlige overskriften «Sortering» (v0.4.3c) beholdes over verktøylinja. */
+#list-section .sort-h { margin: 0 2px 2px; }
+.list-tools .seg.sort { box-sizing: border-box; }
+/* Avvik fra Merkevare: kanten i primærfarge som den gamle «todo»-basisknappen (v0.6-regelen: knappekanter ≥ 3:1). */
+.basis-strip { box-sizing: border-box; -webkit-tap-highlight-color: transparent; border-color: var(--brand); }
+.basis-strip:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.add-panel .item-add-form { padding-bottom: 0; }
+.list-tools + .hint, .basis-strip + .hint, .add-panel + .hint { margin-top: 6px; }
+#list-section .empty { margin: 10px 2px; }
+.menu-sheet { max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; box-sizing: border-box; }

@@ -1,5 +1,7 @@
 # Knaggen
 
+*Husets felles huskeliste.*
+
 Ukeplan for middager og handleliste, delt i husstanden. Statisk nettside (HTML/CSS/JS) uten byggesteg.
 
 ## Slik virker den
