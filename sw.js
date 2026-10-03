@@ -5,10 +5,10 @@
  * v0.6: cachenavnet beholder prefikset «ukeshandel-» (internt, ikke synlig). Ny versjon = nytt navn, og activate sletter
  * alle andre «ukeshandel-»-cacher, så en telefon med 0.4.6 rydder ukeshandel-0.4.6 bort ved oppdatering.
  */
-var VERSION = '0.6.2';
+var VERSION = '0.6.3';
 var CACHE = 'ukeshandel-' + VERSION;
 var SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
-var APP_FILES = ['./', 'index.html', 'style.css?v=0.6.2', 'firebase-config.js?v=0.6.2', 'seed.js?v=0.6.2', 'library.js?v=0.6.2', 'units.js?v=0.6.2', 'sync.js?v=0.6.2', 'app.js?v=0.6.2',
+var APP_FILES = ['./', 'index.html', 'style.css?v=0.6.3', 'firebase-config.js?v=0.6.3', 'seed.js?v=0.6.3', 'library.js?v=0.6.3', 'units.js?v=0.6.3', 'sync.js?v=0.6.3', 'app.js?v=0.6.3',
   // v0.6 Knaggen: manifest, favicon og lockupen i toppen (så appen ser lik ut uten nett). Hjemskjermikonene hentes av systemet.
   'manifest.webmanifest', 'icons/favicon.svg', 'icons/favicon.ico', 'icons/knaggen-lockup-mork.svg', 'icons/knaggen-lockup-lys.svg', 'icons/apple-touch-icon-mork.png'];
 var SDK_FILES = [SDK + 'firebase-app.js', SDK + 'firebase-auth.js', SDK + 'firebase-firestore.js'];

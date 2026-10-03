@@ -52,6 +52,9 @@
   }
 }* { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+/* v0.6.3 (spec v0.6.3 punkt 1): fokus og scrollIntoView holder elementer over fanelinja og – mens en toast vises – over
+ * toastbåndet (og en lagre-/byttelinje under det). Variablene settes på <html> av app.js. */
+html { scroll-padding-bottom: calc(var(--nav-h) + 1px + env(safe-area-inset-bottom, 0px) + var(--dock-lift, 0px) + var(--dock-h, 0px)); }
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -59,8 +62,9 @@ body {
   line-height: 1.4;
   color: var(--ink);
   background: var(--bg);
-  /* v0.6.1: + plass til toasten (48 + 8 px) over fanelinja, så nederste vare aldri dekkes når man har rullet helt ned. */
-  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 72px);
+  /* v0.6.1: + plass til toasten (48 + 8 px) over fanelinja, så nederste vare aldri dekkes når man har rullet helt ned.
+   * v0.6.3: + --dock-extra (settes i app.js mens en toast vises) når toastbåndet er høyere enn 72 px (toast på to linjer). */
+  padding-bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 72px + var(--dock-extra, 0px));
 }
 a { color: var(--brand); }
 h1, h2, h3 { margin: 0; line-height: 1.2; }
@@ -266,8 +270,9 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
  * fanelinja (v0.3.2), og «Angre» (som må fange trykk) lå da midt over Liste-fanen – et trykk på Liste angret byttet.
  * Selve meldingen slipper fortsatt trykk gjennom; bare «Angre» fanger trykk. */
 .toast {
-  position: fixed; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 8px + var(--toast-lift, 0px));
-  /* v0.6.2: --toast-lift (settes i app.js) løfter toasten over lagre-linja i skjemaene, så den aldri dekker «Lagre». */
+  position: fixed; left: 50%; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 8px + var(--dock-lift, 0px));
+  /* v0.6.2: løftes over lagre-linja i skjemaene. v0.6.3: --dock-lift (på <html>) løfter båndet og toasten over en fast
+   * lagre- eller byttelinje nederst, så linja aldri dekkes. */
   /* Glir inn bare 6 px (mindre enn luften på 8 px), så den aldri – heller ikke under animasjonen – ligger oppå fanene. */
   transform: translateX(-50%) translateY(6px); opacity: 0; pointer-events: none;
   background: var(--inv-bg); color: var(--inv-ink); padding: 0 16px; min-height: 48px;
@@ -276,8 +281,22 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
   transition: opacity .2s, transform .2s; z-index: 20; width: max-content; max-width: calc(100vw - 24px); text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-/* v0.4.2: bare «Angre» fanger trykk; resten av toasten slipper trykk gjennom til fanelinja. */
-.toast.show.has-action .toast-act { pointer-events: auto; }
+/* v0.4.2: bare «Angre» fanger trykk; resten av toasten slipper trykk gjennom.
+ * v0.6.3: «Angre» fanger trykk først når toasten er helt fremme (.armed, settes av app.js), og det som ligger under
+ * toasten er alltid toastbåndet – aldri innhold. */
+.toast.show.has-action.armed .toast-act { pointer-events: auto; }
+/* v0.6.3 (spec v0.6.3 punkt 1): toastbåndet. Ugjennomsiktig stripe i full bredde rett over fanelinja (eller over en fast
+ * lagre-/byttelinje), like høy som toasten + 8 px luft over og under. Det virker som en midlertidig forlengelse av
+ * fanelinja: innhold som rulles dit er skjult og kan ikke trykkes (båndet tar trykket, og ingenting skjer). Siden
+ * rulles ikke når båndet kommer, og bunnpolstringen/scroll-padding gjør at alt kan rulles fram over det. */
+.toast-dock {
+  position: fixed; left: 0; right: 0; z-index: 19; display: none;
+  bottom: calc(var(--nav-h) + 1px + env(safe-area-inset-bottom, 0px) + var(--dock-lift, 0px)); height: var(--dock-h, 64px);   /* + 1 px: fanelinjas kant */
+  background: var(--bg); border-top: 1px solid var(--line);
+}
+.toast-dock.show { display: block; }
+/* Mens et ark eller vindu er åpent (modalt), skjules toast og bånd; nedtellingen står stille og fortsetter når det lukkes. */
+.toast.under-modal, .toast-dock.under-modal { visibility: hidden; }
 .toast .toast-msg { padding: 6px 0; }
 .toast-act {
   flex: none; min-height: 44px; padding: 0 14px; margin-right: -8px; border: 0; border-radius: 10px;
@@ -433,6 +452,9 @@ select option:disabled { color: var(--line-strong); }
   -webkit-tap-highlight-color: transparent;
 }
 .tool-btn svg { width: 22px; height: 22px; }
+/* v0.6.3 (spec v0.6.3 punkt 2): «Mer» har synlig tekst (prikkene står foran som pynt). Minst 46 × 46 som før. */
+.tool-btn.more { width: auto; min-width: 46px; padding: 0 10px 0 8px; gap: 4px; font: inherit; font-size: 15px; font-weight: 600; }
+.tool-btn.more svg { width: 18px; height: 18px; }
 .tool-btn[aria-expanded="true"] { background: var(--brand-soft); border-color: var(--brand); }
 .tool-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 

@@ -1,4 +1,4 @@
-/* Knaggen (arbeidsnavn Ukeshandel) v0.6.2 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Knaggen (arbeidsnavn Ukeshandel) v0.6.3 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -149,11 +149,26 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
 
   // v0.6.1: toasten ligger rett OVER fanelinja (ikke oppå den), så trykk på fanene alltid bytter fane.
-  // action: { label, run } gir en knapp (f.eks. «Angre»). Bare den knappen fanger trykk (CSS pointer-events);
-  // resten av toasten slipper trykk gjennom til det som ligger under.
-  var toastTimer = null, toastAction = null;
+  // action: { label, run } gir en knapp (f.eks. «Angre»). Bare den knappen fanger trykk (CSS pointer-events).
+  //
+  // v0.6.3 (spec v0.6.3 punkt 1) – generell løsning: toasten ligger aldri oppå noe trykkbart, på noen skjerm.
+  //  - Mens toasten vises, ligger den i et eget bånd (#toast-dock): en ugjennomsiktig stripe i full bredde mellom
+  //    innholdet og fanelinja (eller en fast lagre-/byttelinje). Båndet er en midlertidig forlengelse av bunnlinja: det
+  //    som rulles inn bak det er skjult og kan ikke trykkes (båndet tar trykket og gjør ingenting). Det er dette som gjør
+  //    løsningen generell: det finnes ingen skjerm eller rulleposisjon der innhold kan ligge synlig under toasten.
+  //  - Siden rulles ikke når båndet kommer (det som var der står stille). Bare hvis elementet brukeren nettopp brukte
+  //    (fokus) ville havnet bak båndet, rulles akkurat nok til at det står over det.
+  //  - Bunnpolstring (--dock-extra) og scroll-padding (--dock-h/--dock-lift på <html>) gjør at alt kan rulles fram over
+  //    båndet, også siste dag/vare/knapp, og at fokus aldri havner bak det.
+  //  - «Angre» fanger trykk først når toasten er helt fremme og har stått et øyeblikk (ANGRE_ARM_MS). Et trykk som var på
+  //    vei mot noe annet idet toasten dukket opp, treffer båndet – ingenting skjer.
+  //  - Mens et ark/vindu (.overlay) er åpent, skjules toast og bånd, og nedtellingen står stille til det lukkes.
+  var TOAST_GAP = 8, ANGRE_ARM_MS = 450, TOAST_RESUME_MIN = 3000;
+  var toastTimer = null, toastAction = null, armTimer = null, dockOffTimer = null, toastDeadline = 0, toastLeft = null;
+  function toastEl() { return document.getElementById('toast'); }
+  function dockEl() { return document.getElementById('toast-dock'); }
   function toast(msg, ms, action) {
-    var t = document.getElementById('toast');
+    var t = toastEl(), dock = dockEl();
     t.textContent = '';
     var m = document.createElement('span');
     m.className = 'toast-msg';
@@ -168,42 +183,104 @@
       b.textContent = action.label;
       t.appendChild(b);
     }
+    t.classList.remove('armed');
     t.classList.toggle('has-action', !!action);
+    clearTimeout(dockOffTimer); clearTimeout(armTimer);
+    if (dock) dock.classList.add('show');
     placeToast();
     t.classList.add('show');
+    keepFocusClear();
+    if (action) armTimer = setTimeout(function () { if (toastAction === action) t.classList.add('armed'); }, ANGRE_ARM_MS);
+    // En ny toast starter alltid synlig; modalCheck() skjuler den igjen hvis et ark faktisk er åpent nå. (Uten dette kunne en
+    // toast som ble vist mens arket lukket seg i samme øyeblikk – f.eks. «Mer» › «Fjern avkrysning» – arve under-modal og bli usynlig.)
+    t.classList.remove('under-modal'); if (dock) dock.classList.remove('under-modal');
+    toastLeft = null;
+    startToastTimer(ms || 2500);
+    modalCheck();
+  }
+  function startToastTimer(ms) {
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(hideToast, ms || 2500);
+    toastDeadline = Date.now() + ms;
+    toastTimer = setTimeout(hideToast, ms);
   }
   function hideToast() {
-    var t = document.getElementById('toast');
-    clearTimeout(toastTimer);
-    toastAction = null;
-    t.classList.remove('show', 'has-action');
+    var t = toastEl(), dock = dockEl();
+    clearTimeout(toastTimer); clearTimeout(armTimer);
+    toastAction = null; toastLeft = null;
+    t.classList.remove('show', 'has-action', 'armed', 'under-modal');
+    // Båndet blir stående mens toasten glir ut (0,2 s), så ingenting dukker opp under en halvsynlig toast.
+    clearTimeout(dockOffTimer);
+    dockOffTimer = setTimeout(function () {
+      if (t.classList.contains('show')) return;
+      if (dock) dock.classList.remove('show', 'under-modal');
+      document.documentElement.style.setProperty('--dock-h', '0px');
+      document.documentElement.style.setProperty('--dock-extra', '0px');
+    }, 220);
   }
-  // v0.6.2 (Sjefen, samme familie som v0.6.1 punkt 1): toasten skal aldri dekke lagre-linja i skjemaene (oppskrift,
-  // engangsmiddag). Ligger linja der toasten ellers ville stått (rett over fanelinja), løftes toasten til 8 px over den.
+  function toastShowing() { return toastEl().classList.contains('show'); }
+  // Båndets plass: rett over fanelinja, eller over den høyeste faste bunnlinja (lagre-linja i skjemaene, byttelinja på
+  // Uke) som står der båndet ellers ville ligget. --dock-lift = hvor mye over fanelinja båndet starter.
   function placeToast() {
-    var t = document.getElementById('toast'), lift = 0;
-    var bar = main.querySelector('.form-actions:not(.plain)'), nav = document.querySelector('.tabs');
-    if (bar && nav && bar.offsetParent !== null) {
-      var nt = nav.getBoundingClientRect().top, br = bar.getBoundingClientRect();
-      var zoneTop = nt - 8 - Math.max(t.offsetHeight || 0, 48) - 8;
-      if (br.bottom > zoneTop && br.top < nt) lift = Math.max(0, Math.ceil(nt - br.top));
+    var t = toastEl(), nav = document.querySelector('.tabs'), root = document.documentElement;
+    if (!nav) return;
+    var dockH = Math.max(t.offsetHeight || 0, 48) + 2 * TOAST_GAP;
+    var nt = nav.getBoundingClientRect().top, base = nt;
+    var bars = main.querySelectorAll('.form-actions:not(.plain), .swap-bar');
+    for (var pass = 0; pass < 3; pass++) {
+      for (var i = 0; i < bars.length; i++) {
+        if (bars[i].offsetParent === null) continue;
+        var br = bars[i].getBoundingClientRect();
+        if (br.height && br.bottom > base - dockH && br.top < base) base = Math.floor(br.top);
+      }
     }
-    t.style.setProperty('--toast-lift', lift + 'px');
+    var lift = Math.max(0, Math.ceil(nt - base));
+    root.style.setProperty('--dock-lift', lift + 'px');
+    root.style.setProperty('--dock-h', dockH + 'px');
+    root.style.setProperty('--dock-extra', Math.max(0, dockH - 72) + 'px');
+  }
+  // Står elementet brukeren nettopp brukte (fokus) bak båndet, rulles det akkurat fram over det. Ellers står siden stille.
+  function keepFocusClear() {
+    var a = document.activeElement;
+    if (!a || a === document.body || a === main || !main.contains(a)) return;
+    var dock = dockEl(); if (!dock) return;
+    var top = dock.getBoundingClientRect().top, r = a.getBoundingClientRect();
+    if (r.height && r.bottom > top - 4) window.scrollBy(0, Math.ceil(r.bottom - top + TOAST_GAP));
   }
   var placeQueued = false;
   function queuePlaceToast() {
-    if (placeQueued || !document.getElementById('toast').classList.contains('show')) return;
+    if (placeQueued || !toastShowing()) return;
     placeQueued = true;
-    requestAnimationFrame(function () { placeQueued = false; placeToast(); });
+    requestAnimationFrame(function () { placeQueued = false; if (toastShowing()) placeToast(); });
   }
   window.addEventListener('scroll', queuePlaceToast, { passive: true });
   window.addEventListener('resize', queuePlaceToast);
-  document.getElementById('toast').addEventListener('click', function (e) {
-    // Bare et trykk på selve «Angre»-knappen i en synlig toast angrer (spec v0.6.1 punkt 1).
-    var a = toastAction, t = document.getElementById('toast');
-    if (!a || !t.classList.contains('show') || !e.target.closest || !e.target.closest('.toast-act')) return;
+  // Ark og vinduer (.overlay i <body>): skjul toast + bånd og stopp nedtellingen; fortsett (minst 3 s) når de lukkes.
+  function modalCheck() {
+    var t = toastEl(), dock = dockEl();
+    var open = !!document.querySelector('body > .overlay:not([hidden])');
+    if (!toastShowing()) return;
+    if (open && toastLeft === null) {
+      toastLeft = Math.max(0, toastDeadline - Date.now());
+      clearTimeout(toastTimer);
+      t.classList.add('under-modal'); if (dock) dock.classList.add('under-modal');
+    } else if (!open && toastLeft !== null) {
+      var left = Math.max(toastLeft, TOAST_RESUME_MIN);
+      toastLeft = null;
+      t.classList.remove('under-modal'); if (dock) dock.classList.remove('under-modal');
+      placeToast();
+      startToastTimer(left);
+    }
+  }
+  if (window.MutationObserver) {
+    new MutationObserver(modalCheck).observe(document.body, { childList: true });
+    // Ny tegning (f.eks. byttelinja eller lagre-linja dukker opp) → båndet plasseres på nytt i neste bilde.
+    new MutationObserver(queuePlaceToast).observe(main, { childList: true, subtree: true });
+  }
+  toastEl().addEventListener('click', function (e) {
+    // Bare et trykk på selve «Angre»-knappen i en synlig, helt fremme toast angrer (spec v0.6.1 punkt 1, v0.6.3 punkt 1).
+    var a = toastAction, t = toastEl();
+    if (!a || !t.classList.contains('show') || !t.classList.contains('armed') || t.classList.contains('under-modal') ||
+        !e.target.closest || !e.target.closest('.toast-act')) return;
     hideToast();
     a.run();
   });
@@ -368,6 +445,10 @@
   var AISLE_GUESS = [
     ['Hus', /^(tannkrem|tannbørste|tanntråd|munnskyll|bleie|bleier|våtserviett|serviett|tørkerull|kjøkkenrull|dopapir|toalettpapir|papirhåndkle|sjampo|shampo|balsam|såpe|håndsåpe|dusjsåpe|dusjgel|deodorant|deo|bodylotion|solkrem|barberblad|barberhøvel|bind|tampong|truseinnlegg|plaster|vatt|bomullspinner|q-tips|oppvaskmiddel|oppvasktabletter|maskinoppvask|vaskemiddel|tøyvask|tøymykner|flekkfjerner|klut|svamp|grillkull|tennvæske|søppelpose|bæreposer|fryseposer|plastfolie|aluminiumsfolie|bakepapir|matpapir|lyspærer|lyspære|batteri|batterier|stearinlys|telys|fyrstikker|kattesand|kattemat|hundemat)$/],
     ['Hus', /(tannkrem|bleier|bleie|såpe|sjampo|vaskemiddel|oppvask|søppelpose|serviett|tørkerull|dopapir|batteri)/],
+    // v0.6.3 (spec v0.6.3 punkt 3): frysevarer før Kjøl-reglene, så «frossen …»/«frosne …» og frysepizza alltid går i Frys.
+    // (Frys har vært en avdeling siden v0, så eldre versjoner viser disse varene under Frys som før.)
+    ['Frys', /^(grandiosa|grandiosa .*|.* grandiosa|big one|big one .*|frysepizza|frossenpizza|frossen pizza|pizza|dypfryst pizza|fiskepinner|fiskepinne|fiskeburger|fiskeburgere|fiskegrateng|fiskeboller frosne|pommes frites|pommes|potetbåter|rösti|frosne bær|frosne grønnsaker|grønnsaksblanding|wokgrønnsaker|wokblanding|frosne erter|erter|maiskorn frosne|frossen spinat|is|iskrem|isbiter|ispinner|ispinne|saftis|kroneis|sorbet|softis|nuggets|kyllingnuggets|vårruller|kyllingvinger frosne)$/],
+    ['Frys', /(^|\s)(frossen|frosne|frosset|fryst|dypfryst)(\s|$)|grandiosa|frysepizza|frossenpizza|fiskepinne|iskrem|(vanilje|sjokolade|jordbær|familie|pinne|saft|mango|kokos|nøtte|krone)-?is$/],
     ['Kjøl', /^(yoghurt|yogurt|kefir|kulturmelk|cultura|skyr|kesam|kvarg|crème fraîche|creme fraiche|smøreost|kremost|brunost|geitost|gulost|norvegia|jarlsberg|ost|mozzarella|fetaost|feta|pålegg|leverpostei|servelat|salami|juice|appelsinjuice|eplejuice|smoothie|syrnet melk|sjokolademelk|iskaffe)$/],
     ['Kjøl', /(yoghurt|kefir|skyr|kesam|kvarg|ost$|melk$|pålegg|postei)/],
     ['Frys', /^(is|iskrem|isbiter|frossenpizza|frossen pizza|frosne bær|frosne grønnsaker|fiskegrateng|pommes frites)$/],
@@ -2033,7 +2114,7 @@
         (on ? ' class="on"' : '') + '>' + x[1] + '</button>';
     }).join('') + '</div>' +
       '<button type="button" class="tool-btn" data-action="add-toggle" aria-label="Legg til vare" aria-expanded="' + (ui.addOpen ? 'true' : 'false') + '" data-testid="legg-til">' + ICON_ADD + '</button>' +
-      '<button type="button" class="tool-btn" data-action="list-menu" aria-haspopup="dialog" aria-expanded="false" aria-label="Mer: kopier, faste varer, basisvarer, fjern avkrysning" data-testid="mer">' + ICON_MORE + '</button></div>';
+      '<button type="button" class="tool-btn more" data-action="list-menu" aria-haspopup="dialog" aria-expanded="false" aria-label="Mer: kopier, faste varer, basisvarer, fjern avkrysning" data-testid="mer">' + ICON_MORE + '<span>Mer</span></button></div>';   // v0.6.3 (spec v0.6.3 punkt 2): synlig tekst «Mer»
     h += basisStrip(built.basis);
     if (ui.addOpen) h += addItemForm();
     if (!built.items.length) {
@@ -2466,7 +2547,7 @@
     ui.error = '';
     if (!/^#husstand/.test(location.hash)) ui.justCreated = false;
     route(); window.scrollTo(0, 0);
-    placeToast();   // v0.6.2: over lagre-linja i skjemaene, ellers rett over fanelinja
+    if (toastShowing()) placeToast();   // v0.6.2/v0.6.3: båndet over lagre-linja i skjemaene, ellers rett over fanelinja
   });
 
   /* ---------- Oppstart ---------- */

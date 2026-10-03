@@ -13,7 +13,7 @@
   <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon-mork.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css?v=0.6.2">
+  <link rel="stylesheet" href="style.css?v=0.6.3">
 </head>
 <body>
   <header class="topbar">
@@ -27,12 +27,15 @@
     <a href="#uke" data-tab="uke"><svg class="ico" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3.75" y="5.25" width="16.5" height="15" rx="3.5"/><path d="M3.75 10.25H20.25M8.5 3.25V6.75M15.5 3.25V6.75"/><circle class="ball" fill="currentColor" cx="15.25" cy="15.25" r="2.1" stroke="none"/></svg>Uke</a>
     <a href="#liste" data-tab="liste"><svg class="ico" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 6.5H20M10 12H20M10 17.5H16.5"/><circle class="ball" fill="currentColor" cx="5" cy="6.5" r="2.1" stroke="none"/><circle cx="5" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="5" cy="17.5" r="1.9" fill="currentColor" stroke="none"/></svg>Liste</a>
   </nav>
+  <!-- v0.6.3 (spec v0.6.3 punkt 1): toastbåndet – en ugjennomsiktig stripe nederst (som fanelinja) som toasten ligger i mens
+       den vises. Innholdet kan ikke ligge synlig eller trykkbart under toasten; bunnpolstring lar alt rulles fram over båndet. -->
+  <div id="toast-dock" class="toast-dock" aria-hidden="true"></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="firebase-config.js?v=0.6.2"></script>
-  <script src="seed.js?v=0.6.2"></script>
-  <script src="library.js?v=0.6.2"></script>
-  <script src="units.js?v=0.6.2"></script>
-  <script type="module" src="sync.js?v=0.6.2"></script>
-  <script type="module" src="app.js?v=0.6.2"></script>
+  <script src="firebase-config.js?v=0.6.3"></script>
+  <script src="seed.js?v=0.6.3"></script>
+  <script src="library.js?v=0.6.3"></script>
+  <script src="units.js?v=0.6.3"></script>
+  <script type="module" src="sync.js?v=0.6.3"></script>
+  <script type="module" src="app.js?v=0.6.3"></script>
 </body>
 </html>
