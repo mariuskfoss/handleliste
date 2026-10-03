@@ -352,3 +352,11 @@ select option:disabled { color: #6f7773; }
 
 /* v0.4.5: hjelpetekst under «Tid (minutter)» i oppskriftsskjemaet. */
 .field-hint { margin: -6px 0 12px; font-size: 13px; color: var(--muted); }
+
+/* v0.4.6: diskret delingskort i Uke etter første plan (deling er ikke lenger første skjerm). */
+.share-card { margin: 14px 0 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
+.share-h { margin: 0 0 4px; font-weight: 700; font-size: 15px; }
+.share-t { margin: 0 0 10px; font-size: 14px; color: var(--muted); line-height: 1.35; }
+.share-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.share-actions .btn.small { min-height: 44px; }
+.share-actions .btn:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }

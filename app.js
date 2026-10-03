@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.5 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Ukeshandel v0.4.6 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -6,7 +6,7 @@
 
   var STORAGE_KEY = 'ukeshandel:v1';
   var HH_KEY = 'ukeshandel:household';            // { hid, secret, core_done, migrated }
-  var ONBOARD_KEY = 'ukeshandel:onboarding';      // 'dismissed'
+  var ONBOARD_KEY = 'ukeshandel:onboarding';      // 'dismissed' = delingstilbudet er avvist («Ikke nå»), vises ikke igjen
   var MIRROR_PREFIX = 'ukeshandel:hh-mirror:';    // siste kjente husstandsdata (rask oppstart)
   var DATA_VERSION = 1;   // holdes på 1 så eldre app-versjoner ikke nullstiller data
   var SCHEMA = 3;         // intern skjemaversjon for lokale data (migreres ved lasting)
@@ -267,6 +267,25 @@
     state = freshState();
     save();
     return state;
+  }
+  // v0.4.6: appen åpner rett med startdata. «Egne data» = noe som avviker fra startdataene (retter, faste varer, uker,
+  // engangsmiddager, avkrysning, +/-, egne varer). Brukes i tekstene om hva som flyttes inn / tas vare på.
+  function meaningful(st) {
+    var clean = function (o) { var r = {}; Object.keys(o || {}).sort().forEach(function (k) { if (o[k] && !(typeof o[k] === 'object' && !Object.keys(o[k]).length)) r[k] = o[k]; }); return r; };
+    var byWeek = function (o) { var r = {}; Object.keys(o || {}).sort().forEach(function (w) { var c = clean(o[w]); if (Object.keys(c).length) r[w] = c; }); return r; };
+    return JSON.stringify([st.recipes, st.staples, clean(st.week_plan), clean(st.oneoffs), byWeek(st.checks), byWeek(st.list_adjust), st.list_extras || []]);
+  }
+  function hasOwnData() {
+    if (hh) return false;
+    try { return meaningful(state) !== meaningful(freshState()); } catch (e) { return true; }
+  }
+  // v0.4.6: «etter første plan» = minst én middag (rett eller engangsmiddag) i en uke.
+  function hasPlan() {
+    if (Object.keys(state.oneoffs || {}).some(function (d) { return state.oneoffs[d]; })) return true;
+    return Object.keys(state.week_plan || {}).some(function (d) { return state.week_plan[d] && recipeById(state.week_plan[d]); });
+  }
+  function showShareCard() {
+    return !hh && !!syncMode() && lsGet(ONBOARD_KEY) !== 'dismissed' && hasPlan();
   }
   // Lagrer lokalt (bare i lokal modus – i husstandsmodus ligger dataene i Firestore).
   function save() {
@@ -540,6 +559,7 @@
     var raw = lsGet(STORAGE_KEY);
     if (raw && !lsGet(STORAGE_KEY + ':backup-before-household')) lsSet(STORAGE_KEY + ':backup-before-household', raw);
     var snapshot = JSON.parse(JSON.stringify(state));
+    ui.movedOwn = hasOwnData();
     Sync.init().then(function () { return createFromLocal(false); }).then(function (v) {
       ui.busy = false; ui.justCreated = true;
       enterHousehold(readHH() || { hid: v.hid, secret: v.secret, core_done: true, migrated: true }, snapshot);
@@ -592,7 +612,7 @@
     if (hh) {
       h += '<div class="page-head"><h2>Husstand</h2></div>';
       if (ui.justCreated) {
-        h += '<p class="notice" data-testid="opprettet">Husstanden er opprettet' + (hadLocalData ? ', og rettene, uka og lista fra denne telefonen er flyttet inn.' : '.') + '</p>';
+        h += '<p class="notice" data-testid="opprettet">Husstanden er opprettet' + (ui.movedOwn ? ', og rettene, uka og lista fra denne telefonen er flyttet inn.' : '.') + '</p>';
       }
       h += '<p>Send denne lenka til den du handler med. Når den åpnes på en annen telefon, ser dere de samme rettene, uka og lista.</p>' +
         '<label class="field"><span>Delingslenke</span><input type="text" id="share-link" readonly value="' + esc(shareLink()) + '"></label>' +
@@ -604,11 +624,11 @@
     } else {
       h += '<div class="page-head"><h2>Del med husstanden</h2></div>' +
         '<p>Opprett en husstand for å dele retter, ukeplan og handleliste. Ingen konto trengs – dere deler en lenke.</p>' +
-        '<p class="hint">' + (hadLocalData ? 'Rettene, ukeplanen og lista på denne telefonen flyttes inn i husstanden.' : 'Husstanden starter med testdataene.') + '</p>' +
+        '<p class="hint">' + (hasOwnData() ? 'Rettene, ukeplanen og lista på denne telefonen flyttes inn i husstanden.' : 'Husstanden starter med startdataene (retter og faste varer) som er her nå.') + '</p>' +
         (ui.error ? '<p class="form-error" data-testid="feil">' + esc(ui.error) + '</p>' : '') +
         '<div class="form-actions plain"><button type="button" class="btn primary" data-action="create-household" data-testid="opprett"' + (ui.busy ? ' disabled' : '') + '>' +
         (ui.busy ? 'Oppretter …' : 'Opprett husstand') + '</button>' +
-        '<button type="button" class="linkbtn" data-action="dismiss-onboarding" data-testid="ikke-naa">Ikke nå</button></div>' +
+        '<a class="btn" href="#uke" data-testid="husstand-tilbake">Tilbake</a></div>' +
         '<p class="hint">Har noen i husstanden allerede opprettet en? Åpne lenka de sendte deg på denne telefonen i stedet.</p>';
     }
     h += '</section>';
@@ -624,7 +644,7 @@
     }
     h += '<p>Du er invitert til å dele retter, ukeplan og handleliste.</p>';
     if (hh && hh.hid !== hid) h += '<p class="hint">Denne telefonen er allerede med i en annen husstand. Blir du med her, byttes husstanden på denne telefonen.</p>';
-    else if (!hh && hadLocalData) h += '<p class="hint">Det som ligger på denne telefonen nå blir ikke slått sammen, men tas vare på som sikkerhetskopi.</p>';
+    else if (!hh && hasOwnData()) h += '<p class="hint">Det som ligger på denne telefonen nå blir ikke slått sammen, men tas vare på som sikkerhetskopi.</p>';
     if (ui.error) h += '<p class="form-error" data-testid="feil">' + esc(ui.error) + '</p>';
     h += '<div class="form-actions plain"><button type="button" class="btn primary" data-action="join" data-hid="' + esc(hid) + '" data-secret="' + esc(secret) + '" data-testid="bli-med"' + (ui.busy ? ' disabled' : '') + '>' +
       (ui.busy ? 'Kobler til …' : 'Bli med') + '</button><a class="btn" href="#uke">Avbryt</a></div></section>';
@@ -1245,6 +1265,14 @@
       h += '</li>';
     });
     h += '</ol>';
+    if (showShareCard() && !swapFrom) {
+      // v0.4.6: diskret delingskort etter første plan (ikke første skjerm).
+      h += '<aside class="share-card" data-testid="del-kort" aria-labelledby="del-kort-h">' +
+        '<p class="share-h" id="del-kort-h">Handler dere sammen?</p>' +
+        '<p class="share-t">Del uka og lista med husstanden – ingen konto, bare en lenke.</p>' +
+        '<div class="share-actions"><a class="btn small primary" href="#husstand" data-testid="del-kort-ja">Del med husstanden</a>' +
+        '<button type="button" class="btn small" data-action="dismiss-share" data-testid="del-kort-nei">Ikke nå</button></div></aside>';
+    }
     if (swapFrom) {
       h += '<div class="swap-bar" data-testid="bytte-linje"><p id="swap-hint" class="swap-hint">Velg dagen <b>' + esc(swapName) + '</b> (' + swapDay +
         ') skal byttes med</p><button type="button" class="btn small" data-action="swap-cancel" data-testid="bytt-avbryt">Avbryt</button></div>';
@@ -2149,9 +2177,11 @@
       renderListSection(); renderStaplesSection();
     } else if (a === 'create-household') {
       startCreate();
-    } else if (a === 'dismiss-onboarding') {
+    } else if (a === 'dismiss-share') {
+      // v0.4.6: «Ikke nå» på delingskortet – vises ikke igjen (ingen ekstra beskjed); deling finnes fortsatt under Retter.
       lsSet(ONBOARD_KEY, 'dismissed');
-      location.hash = '#uke';
+      renderUke();
+      focusEl('.row-actions a');
     } else if (a === 'join') {
       startJoin(btn.getAttribute('data-hid'), btn.getAttribute('data-secret'));
     } else if (a === 'copy-link') {
@@ -2290,10 +2320,10 @@
       if (m) { info.core_done = true; writeHH(info); enterHousehold(info); route(); }
       else if (m === false) { try { localStorage.removeItem(HH_KEY); } catch (x) { /* ignorer */ } }
     }, function () { /* prøver igjen neste gang */ });
-  } else if (!info && syncMode() && lsGet(ONBOARD_KEY) !== 'dismissed' && !parseJoin(location.hash)) {
-    // Første gang med deling tilgjengelig: tilby å opprette husstand.
-    history.replaceState(null, '', location.pathname + location.search + '#husstand');
   }
+  // v0.4.6 (spec v0.4 punkt 6): første åpning viser appen med startdata. Deling tilbys ikke som første skjerm, men som
+  // et lite kort i Uke etter første plan (showShareCard). Firebase (SDK, anonym innlogging) startes først når man
+  // oppretter/blir med i en husstand, eller hvis telefonen allerede er med i en.
   ui.weekOffset = defaultWeekOffset();
   route();
 

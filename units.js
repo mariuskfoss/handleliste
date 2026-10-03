@@ -1,4 +1,4 @@
-/* Ukeshandel v0.4.5 — enheter og pakninger på handlelista (v0.4.1, enhetsnormalisering v0.4.2, basisvarer v0.4.3).
+/* Ukeshandel v0.4.6 — enheter og pakninger på handlelista (v0.4.1, enhetsnormalisering v0.4.2, basisvarer v0.4.3).
  * Rene funksjoner (ingen DOM), lastes før app.js og kan testes i Node.
  *
  * Regler:

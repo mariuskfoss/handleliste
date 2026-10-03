@@ -32,30 +32,37 @@ function randomCode(len = 24) {
   return out.join('');
 }
 
+// v0.4.6: SDK-oppsettet (app/auth/db) gjøres bare én gang. Feiler innloggingen (f.eks. frakoblet), kan man prøve igjen
+// uten å kalle initializeFirestore på nytt (det ga «failed-precondition» ved nytt forsøk).
+let base = null;
 async function init() {
   if (ctx) return ctx;
   if (initPromise) return initPromise;
   initPromise = (async () => {
     const m = mode();
     if (!m) throw new Error('not-configured');
-    const [appMod, au, fs] = await Promise.all([
-      import(SDK + 'firebase-app.js'), import(SDK + 'firebase-auth.js'), import(SDK + 'firebase-firestore.js')
-    ]);
-    const app = appMod.initializeApp(m === 'emulator' ? EMULATOR_CONFIG : prodConfig(), 'ukeshandel');
-    const auth = au.getAuth(app);
-    let db;
-    try {
-      db = fs.initializeFirestore(app, {
-        localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }),
-        ignoreUndefinedProperties: true
-      });
-    } catch (e) {
-      db = fs.initializeFirestore(app, { ignoreUndefinedProperties: true });
+    if (!base) {
+      const [appMod, au, fs] = await Promise.all([
+        import(SDK + 'firebase-app.js'), import(SDK + 'firebase-auth.js'), import(SDK + 'firebase-firestore.js')
+      ]);
+      const app = appMod.initializeApp(m === 'emulator' ? EMULATOR_CONFIG : prodConfig(), 'ukeshandel');
+      const auth = au.getAuth(app);
+      let db;
+      try {
+        db = fs.initializeFirestore(app, {
+          localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }),
+          ignoreUndefinedProperties: true
+        });
+      } catch (e) {
+        db = fs.initializeFirestore(app, { ignoreUndefinedProperties: true });
+      }
+      if (m === 'emulator') {
+        au.connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+        fs.connectFirestoreEmulator(db, '127.0.0.1', 8080);
+      }
+      base = { au, fs, db, auth };
     }
-    if (m === 'emulator') {
-      au.connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-      fs.connectFirestoreEmulator(db, '127.0.0.1', 8080);
-    }
+    const { au, fs, db, auth } = base;
     await auth.authStateReady();
     if (!auth.currentUser) await au.signInAnonymously(auth);
     ctx = { fs, au, db, auth, uid: auth.currentUser.uid };
