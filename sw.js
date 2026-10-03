@@ -1,12 +1,16 @@
-/* Ukeshandel service worker: gjør at appen åpner selv uten dekning (f.eks. i butikken).
+/* Knaggen (arbeidsnavn Ukeshandel) service worker: gjør at appen åpner selv uten dekning (f.eks. i butikken).
  * Appfiler: nett først (alltid nyeste versjon), mellomlager hvis nettet svikter.
  * Firebase-SDK fra gstatic (versjonert, endres aldri): mellomlager først.
  * Firestore/innlogging går aldri via denne (håndteres av Firebase sin egen frakoblet-lagring).
+ * v0.6: cachenavnet beholder prefikset «ukeshandel-» (internt, ikke synlig). Ny versjon = nytt navn, og activate sletter
+ * alle andre «ukeshandel-»-cacher, så en telefon med 0.4.6 rydder ukeshandel-0.4.6 bort ved oppdatering.
  */
-var VERSION = '0.4.6';
+var VERSION = '0.6.0';
 var CACHE = 'ukeshandel-' + VERSION;
 var SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
-var APP_FILES = ['./', 'index.html', 'style.css?v=0.4.6', 'firebase-config.js?v=0.4.6', 'seed.js?v=0.4.6', 'library.js?v=0.4.6', 'units.js?v=0.4.6', 'sync.js?v=0.4.6', 'app.js?v=0.4.6'];
+var APP_FILES = ['./', 'index.html', 'style.css?v=0.6.0', 'firebase-config.js?v=0.6.0', 'seed.js?v=0.6.0', 'library.js?v=0.6.0', 'units.js?v=0.6.0', 'sync.js?v=0.6.0', 'app.js?v=0.6.0',
+  // v0.6 Knaggen: manifest, favicon og lockupen i toppen (så appen ser lik ut uten nett). Hjemskjermikonene hentes av systemet.
+  'manifest.webmanifest', 'icons/favicon.svg', 'icons/favicon.ico', 'icons/knaggen-lockup-mork.svg', 'icons/knaggen-lockup-lys.svg', 'icons/apple-touch-icon-mork.png'];
 var SDK_FILES = [SDK + 'firebase-app.js', SDK + 'firebase-auth.js', SDK + 'firebase-firestore.js'];
 
 self.addEventListener('install', function (e) {

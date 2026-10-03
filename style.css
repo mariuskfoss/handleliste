@@ -1,18 +1,55 @@
 :root {
-  /* Mørkt tema (standard): rolig, ikke neon, god kontrast også i sterkt butikklys. */
-  color-scheme: dark;
-  --bg: #121617;
-  --card: #1c2224;
-  --card-2: #242b2e;
-  --ink: #eceeed;
-  --muted: #a9b1ad;
-  --line: #333b3e;
-  --brand: #7cc4a0;
-  --brand-ink: #0d1a13;
+  /* v0.6 Knaggen: palett fra merkevare/merkevare.md. Mørk er standard (også uten prefers-color-scheme), lys følger systemet.
+   * Avledet (ikke i paletten): --brand-soft / --brand-soft-line = primær tonet inn i flata (mørk: som før),
+   * --inv-* = toasten bruker motsatt modus sine farger. */
+  color-scheme: dark light;
+  --bg: #121617;            /* bakgrunn */
+  --card: #1c2224;          /* flate */
+  --card-2: #242b2e;        /* flate-2 */
+  --line: #333b3e;          /* linje: dekorative skiller */
+  --line-strong: #6e7774;   /* linje-sterk: kant på felt og knapper */
+  --ink: #eceeed;           /* tekst */
+  --muted: #a9b1ad;         /* tekst-dempet */
+  --brand: #7cc4a0;         /* primær (= suksess) */
+  --brand-ink: #0d1a13;     /* på-primær */
   --brand-soft: #22372d;
-  --danger: #f0a39c;
+  --brand-soft-line: #35533f;
+  --accent: #e2b35e;        /* aksent (messing): flater og merker */
+  --accent-ink: #e2b35e;    /* aksent-tekst (= advarsel) */
+  --danger: #f4877a;        /* feil */
+  --inv-bg: #eceeed;
+  --inv-ink: #1b201e;
+  --inv-brand: #2a7350;
+  --inv-brand-ink: #ffffff;
+  --shadow: 0 2px 12px rgba(0,0,0,.45);
+  --overlay: rgba(0,0,0,.6);
   --radius: 12px;
   --nav-h: 64px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f7f5f0;
+    --card: #ffffff;
+    --card-2: #eeeae2;
+    --line: #dad4c9;
+    --line-strong: #7d8481;
+    --ink: #1b201e;
+    --muted: #57605d;
+    --brand: #2a7350;
+    --brand-ink: #ffffff;
+    --brand-soft: #e5eeea;
+    --brand-soft-line: #b4cec2;
+    --accent: #b07c22;      /* bare flater/merker i lys modus, aldri tekst */
+    --accent-ink: #875a10;
+    --danger: #b3261e;
+    --inv-bg: #1c2224;
+    --inv-ink: #eceeed;
+    --inv-brand: #7cc4a0;
+    --inv-brand-ink: #0d1a13;
+    --shadow: 0 2px 12px rgba(27,32,30,.22);
+    --overlay: rgba(27,32,30,.5);
+  }
 }* { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
 body {
@@ -26,13 +63,17 @@ body {
 }
 a { color: var(--brand); }
 h1, h2, h3 { margin: 0; line-height: 1.2; }
+/* v0.6: felles fokusring i primærfargen (≥ 3:1 mot bakgrunn og flate i begge moduser); egne regler under går foran. */
+:where(a, button, summary, [tabindex]:not([tabindex="-1"])):focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
 .topbar {
   position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 8px;
   background: var(--card); color: var(--ink); border-bottom: 1px solid var(--line);
   padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
 }
-.topbar h1 { font-size: 18px; font-weight: 700; letter-spacing: .2px; color: var(--brand); }
+.topbar h1 { font-size: 18px; font-weight: 700; letter-spacing: .2px; color: var(--ink); line-height: 0; }
+/* v0.6: lockup (K-knagg + ordmerke «knaggen») der appnavnet sto; flisa i lockupen har samme farge som toppen. */
+.topbar h1 img { display: block; height: 30px; width: auto; }
 
 main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 12px; }
@@ -51,15 +92,15 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center;
   min-height: 44px; padding: 0 16px; border-radius: 10px;
-  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  border: 1px solid var(--line-strong); background: var(--card); color: var(--ink);
   font: inherit; font-weight: 600; text-decoration: none; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 .btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
-.btn.danger { color: var(--danger); border-color: #6a3a36; }
+.btn.danger { color: var(--danger); border-color: var(--danger); }
 .btn:active { transform: translateY(1px); }
 .icon-btn {
-  min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 10px;
+  min-width: 44px; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 10px;
   background: var(--card); font-size: 18px; color: var(--ink); cursor: pointer; padding: 0;
 }
 .linkbtn {
@@ -115,10 +156,12 @@ main { max-width: 640px; margin: 0 auto; padding: 12px 14px; outline: none; }
 .field span { display: block; font-size: 14px; font-weight: 600; margin-bottom: 4px; }
 input[type=text], input[type=number], select, textarea {
   width: 100%; min-height: 44px; padding: 8px 10px;
-  border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+  border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card);
   font: inherit; font-size: 16px; color: var(--ink);
 }
 select { padding-right: 4px; }
+/* v0.6: plassholdertekst i tekst-dempet (nettleserens standard er for svak mot lys flate). */
+::placeholder { color: var(--muted); opacity: 1; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); outline-offset: 0; border-color: var(--brand); }
 fieldset.ings { border: 0; padding: 0; margin: 4px 0 12px; }
 fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; padding: 0; }
@@ -175,7 +218,7 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .item-src { display: block; font-size: 12px; color: var(--muted); }
 .src-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* v0.4.2: «… krysset av» på egen linje som brytes, aldri kuttes. */
-.src-note { display: block; white-space: normal; overflow-wrap: anywhere; color: #e6cf8a; font-weight: 600; font-style: normal; }
+.src-note { display: block; white-space: normal; overflow-wrap: anywhere; color: var(--accent-ink); font-weight: 600; font-style: normal; }
 .item.moving { position: relative; z-index: 1; background: var(--card); }
 .item.src-staple .item-src { font-style: italic; }
 .item.checked .item-name, .item.checked .item-qty { text-decoration: line-through; color: var(--muted); }
@@ -216,8 +259,8 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .toast {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
   transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none;
-  background: #e9ecea; color: #111; padding: 0 16px; min-height: 48px; max-height: calc(var(--nav-h) - 12px);
-  border-radius: 14px; font-size: 14px; line-height: 1.3; box-shadow: 0 2px 12px rgba(0,0,0,.45);
+  background: var(--inv-bg); color: var(--inv-ink); padding: 0 16px; min-height: 48px; max-height: calc(var(--nav-h) - 12px);
+  border-radius: 14px; font-size: 14px; line-height: 1.3; box-shadow: var(--shadow);
   display: flex; align-items: center; gap: 12px; justify-content: center;
   transition: opacity .2s, transform .2s; z-index: 20; width: max-content; max-width: calc(100vw - 24px); text-align: center;
 }
@@ -227,10 +270,10 @@ fieldset.ings legend { font-size: 14px; font-weight: 600; margin-bottom: 6px; pa
 .toast .toast-msg { padding: 6px 0; }
 .toast-act {
   flex: none; min-height: 44px; padding: 0 14px; margin-right: -8px; border: 0; border-radius: 10px;
-  background: #1f3a2a; color: #d7f5e1; font: inherit; font-weight: 700; cursor: pointer;
+  background: var(--inv-brand); color: var(--inv-brand-ink); font: inherit; font-weight: 700; cursor: pointer;
 }
 
-.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 30; display: flex; align-items: flex-end; justify-content: center; }
+.overlay { position: fixed; inset: 0; background: var(--overlay); z-index: 30; display: flex; align-items: flex-end; justify-content: center; }
 .sheet { background: var(--card); width: 100%; max-width: 640px; border-radius: 16px 16px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 10px; }
 .sheet textarea { font-family: inherit; font-size: 15px; min-height: 240px; }
 [hidden] { display: none !important; }
@@ -241,12 +284,12 @@ a { color: var(--brand); }
 .btn.small { min-height: 38px; padding: 0 12px; font-size: 14px; }
 .week-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
 .week-tools .summary { margin: 0; text-align: left; }
-.notice { background: var(--brand-soft); color: var(--ink); border: 1px solid #35533f; border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 0 0 10px; }
+.notice { background: var(--brand-soft); color: var(--ink); border: 1px solid var(--brand-soft-line); border-radius: 10px; padding: 10px 12px; font-size: 14px; margin: 0 0 10px; }
 .day-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 0; }
 .day-foot .day-meta { margin-top: 6px; }
 /* v0.3.2: minst 40 px treffflate uten å endre kortet: flata strekker seg nedover (ikke opp over nedtrekksmenyen). */
 .day-foot .linkbtn { display: inline-flex; align-items: flex-start; box-sizing: border-box; min-height: 40px; padding: 6px 0 16px 16px; margin-bottom: -16px; font-size: 13px; line-height: 18px; white-space: nowrap; }
-.day.has-oneoff { border-style: dashed; border-color: #5b7a68; }
+.day.has-oneoff { border-style: dashed; border-color: var(--line-strong); }
 .oneoff { display: flex; flex-direction: column; gap: 2px; }
 .oneoff-name { font-weight: 650; font-size: 17px; }
 .oneoff-actions { display: flex; gap: 8px; margin-top: 8px; }
@@ -266,19 +309,19 @@ a { color: var(--brand); }
 .item { display: flex; align-items: center; }
 .item label { flex: 1; min-width: 0; }
 .qty-ctl { display: flex; gap: 4px; padding-right: 8px; flex: none; }
-.qbtn { width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--card-2); color: var(--ink); font-size: 20px; line-height: 1; cursor: pointer; padding: 0; }
+.qbtn { width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--card-2); color: var(--ink); font-size: 20px; line-height: 1; cursor: pointer; padding: 0; }
 .qbtn:disabled { opacity: .35; }
 .item.zero .item-name, .item.zero .item-qty { color: var(--muted); }
-.item.checked .qbtn { opacity: .5; }
-select option:disabled { color: #6f7773; }
+.item.checked .qbtn { color: var(--muted); } /* v0.6: dempet med tekst-dempet i stedet for opacity .5 (som ga under 4,5:1) */
+select option:disabled { color: var(--line-strong); }
 
 /* v0.2 */
 .sync-status { font-size: 12px; font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .sync-status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .sync-status.ok::before { background: var(--brand); }
-.sync-status.pending::before { background: #d9c27a; }
-.sync-status.off { color: #e6cf8a; }
-.sync-status.off::before { background: #d9a55a; }
+.sync-status.pending::before { background: var(--accent); }
+.sync-status.off { color: var(--accent-ink); }
+.sync-status.off::before { background: var(--accent); }
 .form-actions.plain { position: static; margin: 12px 0; padding: 0; border: 0; background: none; align-items: center; }
 [data-page="husstand"] p, [data-page="join"] p { margin: 0 0 12px; }
 #share-link { font-size: 14px; color: var(--muted); }
@@ -290,7 +333,7 @@ select option:disabled { color: #6f7773; }
 
 /* v0.4.3: basisvarer */
 .ing-top { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
-.ing-basis { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 14px; color: var(--muted); cursor: pointer; }
+.ing-basis { display: flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 10px; font-size: 14px; color: var(--muted); cursor: pointer; }
 .ing-basis input { width: 20px; height: 20px; margin: 0; accent-color: var(--brand); }
 .basis-box {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 44px; box-sizing: border-box;
@@ -337,14 +380,15 @@ select option:disabled { color: #6f7773; }
 .oneoff-actions { flex-wrap: wrap; }
 .oneoff-actions .btn.small { min-height: 44px; }
 .oneoff-actions .swap-btn { margin-left: auto; }
-.swapping .day.swap-target { border-color: #4f6b5c; }
+.swapping .day.swap-target { border-color: var(--line-strong); }
 .swapping .day.swap-from { border: 2px dashed var(--brand); background: var(--brand-soft); padding: 9px 11px; }
+.swapping .day.swap-from select { border-color: var(--brand); } /* v0.6: feltkanten ≥ 3:1 også mot den tonede flata */
 .swap-btn.swap-to { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
 .swap-btn.is-from { border-color: var(--brand); color: var(--brand); }
 .swap-bar {
   position: sticky; bottom: calc(var(--nav-h) + env(safe-area-inset-bottom, 0px) + 8px); z-index: 4;
   display: flex; align-items: center; gap: 10px; margin: 10px 0 0; padding: 8px 8px 8px 12px;
-  background: var(--card); border: 1px solid var(--brand); border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.45);
+  background: var(--card); border: 1px solid var(--brand); border-radius: 12px; box-shadow: var(--shadow);
 }
 .swap-hint { flex: 1; margin: 0; font-size: 14px; line-height: 1.3; }
 .swap-bar .btn.small { min-height: 44px; flex: none; }

@@ -3,14 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1c2224">
-  <title>Ukeshandel</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9B%92%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=0.4.6">
+  <meta name="theme-color" content="#1c2224" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="color-scheme" content="dark light">
+  <meta name="apple-mobile-web-app-title" content="Knaggen">
+  <meta name="application-name" content="Knaggen">
+  <title>Knaggen</title>
+  <link rel="icon" href="icons/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon-mork.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css?v=0.6.0">
 </head>
 <body>
   <header class="topbar">
-    <h1>Ukeshandel</h1>
+    <h1><picture><source srcset="icons/knaggen-lockup-lys.svg" media="(prefers-color-scheme: light)"><img src="icons/knaggen-lockup-mork.svg" alt="Knaggen" width="110" height="30"></picture></h1>
     <span id="sync-status" class="sync-status" role="status" aria-live="polite" hidden></span>
   </header>
   <main id="main" tabindex="-1"></main>
@@ -20,11 +27,11 @@
     <a href="#liste" data-tab="liste"><span class="ico" aria-hidden="true">🛒</span>Liste</a>
   </nav>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="firebase-config.js?v=0.4.6"></script>
-  <script src="seed.js?v=0.4.6"></script>
-  <script src="library.js?v=0.4.6"></script>
-  <script src="units.js?v=0.4.6"></script>
-  <script type="module" src="sync.js?v=0.4.6"></script>
-  <script type="module" src="app.js?v=0.4.6"></script>
+  <script src="firebase-config.js?v=0.6.0"></script>
+  <script src="seed.js?v=0.6.0"></script>
+  <script src="library.js?v=0.6.0"></script>
+  <script src="units.js?v=0.6.0"></script>
+  <script type="module" src="sync.js?v=0.6.0"></script>
+  <script type="module" src="app.js?v=0.6.0"></script>
 </body>
 </html>
