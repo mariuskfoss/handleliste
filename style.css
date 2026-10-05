@@ -496,3 +496,194 @@ select option:disabled { color: var(--line-strong); }
 .list-tools + .hint, .basis-strip + .hint, .add-panel + .hint { margin-top: 6px; }
 #list-section .empty { margin: 10px 2px; }
 .menu-sheet { max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; box-sizing: border-box; }
+
+
+/* ========== v0.7 Faste varer (Merkevare v07/README.md) ========== */
+/* Knaggen – forslag «Faste varer» (merkevare/faste-varer). Bare paletten fra style.css (var(--…)), ingen nye farger. */
+.fv-sheet { max-height: calc(100dvh - 24px); overflow-y: auto; box-sizing: border-box; padding-bottom: 0; gap: 10px; align-content: start; }
+.fv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.fv-head h3 { margin: 0; font-size: 19px; }
+.fv-head .sub { display: block; margin-top: 2px; }
+.fv-add { display: flex; gap: 6px; position: relative; }
+.fv-add input { flex: 1; min-width: 0; }
+.fv-add .btn { flex: none; padding: 0 14px; }
+.fv-guess { font-size: 13px; color: var(--muted); margin: -4px 2px 0; }
+.fv-guess b { color: var(--ink); font-weight: 600; }
+.fv-ac { list-style: none; margin: 0; padding: 0; position: absolute; left: 0; right: 0; top: 50px; z-index: 3;
+  background: var(--card); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.18); overflow: hidden; }
+.fv-ac li { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 48px; padding: 0 12px; }
+.fv-ac li + li { border-top: 1px solid var(--line); }
+.fv-ac li.on { background: var(--brand-soft); }
+.fv-ac .ac-name b { font-weight: 700; }
+.fv-ac .ac-aisle { font-size: 13px; color: var(--muted); }
+.fv-ac li.on .ac-aisle { color: var(--muted); }
+.fv-ac .ac-new { color: var(--brand); font-weight: 600; }
+.fv-suggest { background: var(--brand-soft); border: 1px solid var(--brand-soft-line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 8px; font-size: 14px; }
+.fv-suggest p { margin: 0; }
+.fv-suggest .acts { display: flex; gap: 8px; }
+.fv-suggest .btn { min-height: 44px; padding: 0 14px; font-size: 14px; }
+.fv-suggest .btn:not(.primary) { background: transparent; }
+.fv-group-h { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 6px 2px -4px; display: flex; justify-content: space-between; }
+.fv-group-h span { text-transform: none; letter-spacing: 0; }
+.fv-rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; }
+.fv-rows > li + li { border-top: 1px solid var(--line); }
+.fv-row { display: flex; align-items: center; }
+.fv-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 52px; box-sizing: border-box; padding: 6px 4px 6px 12px; cursor: pointer; }
+.fv-pick input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--brand); }
+.fv-text { flex: 1; min-width: 0; }
+.fv-name { font-weight: 600; }
+.fv-qty { color: var(--ink); }
+.fv-meta { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-top: 1px; }
+.fv-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 700; color: var(--brand); background: var(--brand-soft); border-radius: 6px; padding: 1px 6px 1px 4px; }
+.fv-badge svg { width: 13px; height: 13px; }
+.fv-edit { flex: none; width: 44px; height: 44px; margin-right: 4px; border: 0; border-radius: 10px; background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.fv-edit svg { width: 20px; height: 20px; }
+.fv-rows > li.open { box-shadow: inset 3px 0 0 var(--brand); background: var(--card); }
+.fv-rows > li.open .fv-edit { color: var(--brand); }
+.fv-rows > li.new { background: var(--brand-soft); }
+.fv-editor { display: grid; gap: 10px; padding: 2px 12px 12px 15px; }
+.fv-editor .lbl { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 4px; }
+.fv-amt { display: grid; grid-template-columns: 44px 64px 44px 1fr; gap: 6px; align-items: center; }
+.fv-amt input { text-align: center; padding: 8px 4px; }
+.fv-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fv-chip { min-height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--card); color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; position: relative; }
+.fv-chip::after { content: ""; position: absolute; inset: -2px 0; } /* treffflate 44 px */
+.fv-chip.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.fv-chip.on::before { content: "✓ "; }
+.fv-editor .seg { grid-template-columns: repeat(2, 1fr); margin: 0; }
+.fv-editor .seg button.on { box-shadow: inset 0 -3px 0 var(--brand); }
+.fv-editor .seg-hint { font-size: 12px; color: var(--muted); margin: 4px 2px 0; }
+.fv-ed-acts { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.fv-del { min-height: 44px; padding: 0 4px; border: 0; background: none; color: var(--danger); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.fv-foot { position: sticky; bottom: 0; margin: 0 -16px; padding: 10px 16px 14px; background: var(--card); border-top: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
+.fv-foot .sub { flex: 1; }
+.fv-foot .btn { min-width: 120px; }
+/* Første gang */
+.fv-empty { display: grid; gap: 10px; padding: 4px 0 6px; }
+.fv-empty p { margin: 0; }
+.fv-empty .lead { font-size: 16px; }
+.fv-starters { display: flex; flex-wrap: wrap; gap: 8px; }
+.fv-starter { min-height: 44px; padding: 0 14px 0 10px; border: 1px solid var(--brand); border-radius: 999px; background: var(--card); color: var(--brand); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.fv-starter.added { background: var(--brand-soft); border-color: var(--brand-soft-line); color: var(--ink); }
+.fv-starter.added::before { content: "✓ "; color: var(--brand); }
+.fv-starter:not(.added)::before { content: "+ "; }
+/* På uke-lista */
+.fv-strip { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 52px; margin: 12px 0 0; padding: 8px 12px;
+  background: var(--card); border: 1px solid var(--brand); border-radius: var(--radius); color: var(--ink); font: inherit; font-size: 14px; text-align: left; box-sizing: border-box; }
+.fv-strip .go { flex: none; color: var(--brand); font-weight: 700; }
+.fv-strip b { font-weight: 600; }
+.item.zero .item-src .src-line { font-style: normal; }
+.skip-note { color: var(--accent-ink); font-weight: 600; font-style: normal; }
+/* v2 (etter Trudes test): katalogen som egen side */
+.fv-page .fv-rows { background: var(--card); border-radius: var(--radius); overflow: hidden; }
+.fv-top { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; }
+.fv-top .t { flex: 1; min-width: 0; }
+.fv-top h2 { font-size: 20px; }
+.fv-search { position: relative; margin: 0 0 10px; }
+.fv-search input { padding-left: 38px; min-height: 44px; }
+.fv-search svg { position: absolute; left: 11px; top: 12px; width: 20px; height: 20px; color: var(--muted); }
+.fv-page .fv-group-h { margin: 14px 2px 6px; }
+.fv-page .fv-suggest { margin-bottom: 4px; }
+.fv-due { color: var(--brand); font-weight: 700; }
+.fv-editor .seg.four { grid-template-columns: repeat(2, 1fr); }
+.fv-new { display: grid; gap: 8px; background: var(--card); border: 1px solid var(--brand); border-radius: var(--radius); padding: 10px 12px; margin: 0 0 10px; }
+.fv-new .nm { font-weight: 700; font-size: 17px; }
+.fv-new .guess { display: flex; flex-wrap: wrap; gap: 6px; }
+.fv-new .g { position: relative; font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--card); }
+.fv-new .acts { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.fv-new .small { font-size: 12px; color: var(--muted); }
+.fv-hit { font-size: 13px; color: var(--muted); margin: 0 2px 6px; }
+.fv-addnew { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 52px; padding: 0 12px; margin-top: 10px; box-sizing: border-box;
+  background: var(--card); border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--brand); font: inherit; font-weight: 700; text-align: left; }
+.fv-info { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 48px; margin: 0 0 6px; padding: 6px 12px; box-sizing: border-box;
+  background: var(--card); border: 1px solid var(--brand); border-radius: var(--radius); color: var(--ink); font: inherit; font-size: 14px; text-align: left; }
+.fv-info .go { flex: none; color: var(--brand); font-weight: 700; }
+.fv-info b { font-weight: 600; }
+.fv-new .g::after { content: ""; position: absolute; inset: -4px 0; }
+
+/* Knaggen – Faste varer v0.7 (merkevare/faste-varer/v07). Kommer etter faste.css. Bare paletten (var(--…)), ingen nye farger.
+ * Ingen hyppighet, ingen automatikk: siden er oversikt + redigering, ukevalget er et ark med «Som forrige uke». */
+/* Egen side */
+.fv-page .fv-top { margin: 2px 0 10px; }
+.fv-page .fv-top .sub { display: block; margin-top: 1px; }
+.fv-bridge { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 48px; margin: 0 0 4px; padding: 0 12px; box-sizing: border-box;
+  border: 1px solid var(--brand); border-radius: 10px; background: var(--brand-soft); color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.fv-bridge .t { flex: 1; min-width: 0; font-weight: 600; }
+.fv-bridge .go { flex: none; color: var(--brand); font-weight: 700; }
+.fv-page .fv-group-h { margin: 14px 2px 6px; }
+.fv-item { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 4px 4px 4px 12px; box-sizing: border-box;
+  background: none; border: 0; color: var(--ink); font: inherit; font-size: 16px; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.fv-item .tx { flex: 1; min-width: 0; }
+.fv-item .nm { font-weight: 600; }
+.fv-item .q { color: var(--ink); }
+.fv-item .pen { flex: none; width: 40px; height: 40px; display: grid; place-items: center; color: var(--muted); }
+.fv-item .pen svg { width: 18px; height: 18px; }
+.fv-item:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.fv-rows > li.open .fv-item .pen { color: var(--brand); }
+.fv-rows > li.dup { background: var(--brand-soft); box-shadow: inset 3px 0 0 var(--brand); }
+.fv-rows > li.dup .fv-item { padding-top: 6px; padding-bottom: 6px; }
+.fv-same { display: inline-block; margin-left: 6px; font-size: 12px; font-weight: 700; color: var(--brand); border: 1px solid var(--brand); border-radius: 6px; padding: 0 5px; vertical-align: 1px; }
+.fv-editor .note { font-size: 12px; color: var(--muted); margin: 0; }
+.fv-amt { grid-template-columns: 44px 56px 44px 1fr; }
+/* Ny vare */
+.fv-new .acts .check { font-size: 15px; }
+.fv-new .g { min-height: 40px; font-size: 14px; }
+.fv-new .g .k { color: var(--muted); font-weight: 600; margin-right: 4px; }
+.fv-msg { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; font-size: 14px; margin: 8px 0 0; }
+.fv-msg b { font-weight: 700; }
+/* Tom side */
+.fv-empty .lead { font-size: 16px; }
+.fv-ex { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+.fv-ex li { display: flex; justify-content: space-between; gap: 8px; padding: 10px 12px; font-size: 14px; }
+.fv-ex li + li { border-top: 1px solid var(--line); }
+.fv-ex .g { color: var(--muted); }
+/* Ukevalget (ark) */
+.uv-sheet { height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; box-sizing: border-box; padding-bottom: 0; gap: 8px; align-content: start; grid-template-rows: auto; }
+.uv-head { display: flex; align-items: center; gap: 8px; }
+.uv-head h3 { flex: 1; margin: 0; font-size: 19px; }
+.uv-sheet .hint { margin: -2px 2px 0; }
+.uv-sheet .fv-search { margin: 0; }
+.uv-prev { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 6px 12px; box-sizing: border-box;
+  border: 1px solid var(--brand); border-radius: 10px; background: var(--brand-soft); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.uv-prev svg { flex: none; width: 22px; height: 22px; color: var(--brand); }
+.uv-prev .t { flex: 1; min-width: 0; display: grid; }
+.uv-prev .t b { font-size: 16px; font-weight: 700; }
+.uv-prev .t span { font-size: 13px; color: var(--muted); }
+.uv-status { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 0 4px 0 12px; box-sizing: border-box;
+  border: 1px solid var(--brand-soft-line); border-radius: 10px; background: var(--brand-soft); color: var(--ink); font-size: 14px; }
+.uv-status .t { flex: 1; min-width: 0; }
+.uv-status .t b { font-weight: 700; }
+.uv-status .ok { color: var(--brand); font-weight: 700; }
+.uv-undo { flex: none; min-height: 44px; min-width: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: none; color: var(--brand); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.uv-sheet .fv-group-h { margin: 8px 2px 4px; }
+.uv-rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.uv-rows > li + li { border-top: 1px solid var(--line); }
+.uv-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 4px 12px; box-sizing: border-box; cursor: pointer; }
+.uv-row input { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--brand); }
+.uv-row .nm { font-weight: 600; }
+.uv-sheet .fv-foot { margin: 4px -16px 0; padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.uv-sheet .fv-foot .btn { flex: 1; }
+.uv-sheet .fv-foot .sub { flex: none; }
+/* Liste: «Legg til vare» finner fast vare */
+.ai-match { display: flex; gap: 10px; align-items: flex-start; background: var(--brand-soft); border: 1px solid var(--brand-soft-line); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+.ai-match .ok { color: var(--brand); font-weight: 700; flex: none; }
+.ai-match b { font-weight: 700; }
+.ai-match .m { color: var(--muted); display: block; margin-top: 2px; font-size: 13px; }
+.fv-ex { background: transparent; border: 1px dashed var(--line-strong); }
+.fv-ex li { color: var(--muted); font-style: italic; }
+.fv-ex li + li { border-top: 1px dashed var(--line); }
+/* Trykkflater: 44 px også visuelt (ikke bare via ::after). */
+.fv-chip, .fv-new .g { min-height: 44px; }
+
+
+/* v0.7 tilpasninger */
+.fv-page { padding-bottom: 8px; }
+.fv-editor .err { color: var(--danger); font-size: 13px; font-weight: 600; margin: 0; }
+.fv-chip { min-height: 44px; }
+.uv-none { font-size: 14px; color: var(--muted); margin: 4px 2px; }
+.uv-addnew { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 0 12px; margin: 8px 0;
+  background: var(--card); border: 1px dashed var(--line-strong); border-radius: var(--radius); color: var(--brand); font: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+.sheet.uv-sheet { display: flex; flex-direction: column; }
+.uv-sheet .uv-body { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.uv-sheet .fv-foot { position: sticky; bottom: 0; }
+.ai-match + .ai-row, .ai-match ~ #ai-staple, form.staple-match .ai-row, form.staple-match #ai-staple, form.staple-match label.check { display: none; }
