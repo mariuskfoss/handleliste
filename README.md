@@ -1,4 +1,4 @@
-# Knaggen (v0.7.0)
+# Knaggen (v0.7.1)
 
 *Arbeidsnavn: Ukeshandel – mapper, kode, lagringsnøkler og adressen (`…/handleliste/`) beholder det gamle navnet.*
 
@@ -24,7 +24,7 @@ Kan hostes som vanlige statiske filer (hvilken som helst HTTPS-statisk hosting).
 - Ikoner fra `../merkevare/endelig/` i `icons/`: favicon.ico (16/32/48) + favicon.svg (følger lys/mørk), apple-touch-icon (mørk), icon-192/512 og maskable-192/512 (mørk, som anbefalt i merkevare-README), lockup mørk/lys (`<picture>` med `prefers-color-scheme`).
 - Manifest: `display: "browser"` med vilje – et hjemskjermikon åpner fortsatt appen i nettleseren som i dag (samme lagring; på iOS ville `standalone` gitt egen lagring uten dataene). Ingen `apple-mobile-web-app-capable`.
 - Farger fra `../merkevare/merkevare.md`: mørk er standard, lys følger `prefers-color-scheme: light`; `theme-color` per modus (#1c2224 / #ffffff). Avledet: `--brand-soft`(-line) (primær tonet inn i flata; lys #e5eeea) og `--inv-*` (toasten bruker motsatt modus). Felt- og knappekanter bruker «linje-sterk» (≥ 3:1), plassholdere «tekst-dempet», felles fokusring i primær. Kontrast revideres av `tests/e2e-v06.js` (alle synlige tekst/bakgrunn-par og UI-kanter, begge moduser, AA).
-- Service worker: cachenavnet beholder prefikset `ukeshandel-` (nå `ukeshandel-0.7.0`); activate sletter alle andre `ukeshandel-*`, så en 0.4.6-telefon rydder `ukeshandel-0.4.6`. Manifest, favicon og lockup forhåndslagres (toppen ser lik ut uten nett).
+- Service worker: cachenavnet beholder prefikset `ukeshandel-` (nå `ukeshandel-0.7.1`); activate sletter alle andre `ukeshandel-*`, så en 0.4.6-telefon rydder `ukeshandel-0.4.6`. Manifest, favicon og lockup forhåndslagres (toppen ser lik ut uten nett).
 - Uendret: adresse, `localStorage`-/IndexedDB-nøkler, Firebase-oppsett og -data, `firestore.rules`.
 
 ## v0.6.1 (spec «v0.6.1 — Retting etter Trudes gjennomgang»)
@@ -50,6 +50,12 @@ Kan hostes som vanlige statiske filer (hvilken som helst HTTPS-statisk hosting).
   - Kostnad: mens toasten vises (2,5 s, eller 8 s med «Angre») skjuler båndet ca. 64 px av innholdet nederst – på samme måte som fanelinja.
 - **«Mer» med synlig tekst:** verktøyknappen på Liste viser «⋯ Mer» (prikkene er pynt; tilgjengelig navn begynner med «Mer»). 46 px høy, ca. 69 px bred; verktøylinja får plass ved 360 px uten at «Matrett»/«Plassering» kuttes.
 - **Frysevarer i Frys:** «Legg til vare» gjetter Frys for Grandiosa og andre frosne pizzaer (Big One, frysepizza, frossenpizza, pizza), fiskepinner, fiskeburgere, frosne grønnsaker/bær, wokgrønnsaker, pommes frites, potetbåter, is/iskrem/ispinner/sjokoladeis o.l., nuggets, vårruller og alt som begynner med «frossen/frosne/fryst». Pizzabunn, ris, fryseposer, melk, ost og yoghurt gjettes som før. Frys har vært en avdeling siden v0, så eldre versjoner viser varene under Frys – ingen ny avdeling, ingen nøkkel- eller regelendring.
+
+## v0.7.1 (spec «v0.7.1 — Rettinger etter Trudes v0.7-bekreftelse»)
+- Ukevalget beholder scroll og flytter ikke fokus til søk ved avkrysning.
+- Gjetting: agurk/paprika → Frukt/grønt, skinke/kaviar → Kjøl, rundstykker → Frys, matpakkepapir → Hus.
+- «Som forrige uke» bare etter eksplisitt valg; statuslinja oppdateres når valget endres.
+- «2 bokser», «glass» i enhetsringen, enklere duplikatmelding, rettet tilbake-‹.
 
 ## v0.7 (spec «v0.7 — Oversikt over faste varer»)
 - **Egen side** `#liste/faste`: faste varer gruppert etter avdeling i butikkrekkefølge (`AISLES`), alfabetisk innenfor. «Søk eller legg til» øverst. Radene er tekst; ett trykk åpner redigering på stedet (navn, mengde −/+/enhet, avdeling som brikker). Alt lagres med en gang. Avdelingsbytte flytter raden først når den lukkes. Slett har «Angre» i 8 s (samme `id`, ukevalgene beholdes).

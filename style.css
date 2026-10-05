@@ -687,3 +687,11 @@ select option:disabled { color: var(--line-strong); }
 .uv-sheet .uv-body { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 .uv-sheet .fv-foot { position: sticky; bottom: 0; }
 .ai-match + .ai-row, .ai-match ~ #ai-staple, form.staple-match .ai-row, form.staple-match #ai-staple, form.staple-match label.check { display: none; }
+
+/* v0.7.1: tilbake «‹» på faste-siden – midtstilt i trykkflaten */
+.fv-top > .icon-btn,
+.fv-top > a.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; flex: none; font-size: 28px; line-height: 1;
+  padding: 0; margin: 0; text-decoration: none;
+}

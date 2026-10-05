@@ -1,4 +1,4 @@
-/* Knaggen (arbeidsnavn Ukeshandel) v0.7.0 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Knaggen (arbeidsnavn Ukeshandel) v0.7.1 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -443,16 +443,25 @@
   // eller rettbiblioteket. Brukes etter knownIngredient (egne data vinner), før standarden Tørrvare.
   // Appen har ingen egen meieriavdeling: meieri og pålegg går i «Kjøl»; ikke-mat går i «Hus» (vises som «Husholdning»).
   var AISLE_GUESS = [
-    ['Hus', /^(tannkrem|tannbørste|tanntråd|munnskyll|bleie|bleier|våtserviett|serviett|tørkerull|kjøkkenrull|dopapir|toalettpapir|papirhåndkle|sjampo|shampo|balsam|såpe|håndsåpe|dusjsåpe|dusjgel|deodorant|deo|bodylotion|solkrem|barberblad|barberhøvel|bind|tampong|truseinnlegg|plaster|vatt|bomullspinner|q-tips|oppvaskmiddel|oppvasktabletter|maskinoppvask|vaskemiddel|tøyvask|tøymykner|flekkfjerner|klut|svamp|grillkull|tennvæske|søppelpose|bæreposer|fryseposer|plastfolie|aluminiumsfolie|bakepapir|matpapir|lyspærer|lyspære|batteri|batterier|stearinlys|telys|fyrstikker|kattesand|kattemat|hundemat)$/],
+    // v0.7.1: eksakte treff først (Trude: agurk/paprika/skinke/kaviar/rundstykker/matpakkepapir)
+    ['Frukt/grønt', /^(agurk|agurker|paprika|paprikaer)$/],
+    ['Kjøl', /^(skinke|kokt skinke|kaviar|macks kaviar|påleggskaviar)$/],
+    ['Frys', /^(rundstykker|rundstykke)$/],
+    ['Hus', /^(matpakkepapir|matpakke papir|smørbrødpapir|vokspapir)$/],
+    ['Hus', /^(tannkrem|tannbørste|tanntråd|munnskyll|bleie|bleier|våtserviett|serviett|tørkerull|kjøkkenrull|dopapir|toalettpapir|papirhåndkle|sjampo|shampo|balsam|såpe|håndsåpe|dusjsåpe|dusjgel|deodorant|deo|bodylotion|solkrem|barberblad|barberhøvel|bind|tampong|truseinnlegg|plaster|vatt|bomullspinner|q-tips|oppvaskmiddel|oppvasktabletter|maskinoppvask|vaskemiddel|tøyvask|tøymykner|flekkfjerner|klut|svamp|grillkull|tennvæske|søppelpose|bæreposer|fryseposer|plastfolie|aluminiumsfolie|bakepapir|matpapir|matpakkepapir|smørbrødpapir|vokspapir|lyspærer|lyspære|batteri|batterier|stearinlys|telys|fyrstikker|kattesand|kattemat|hundemat)$/],
     ['Hus', /(tannkrem|bleier|bleie|såpe|sjampo|vaskemiddel|oppvask|søppelpose|serviett|tørkerull|dopapir|batteri)/],
     // v0.6.3 (spec v0.6.3 punkt 3): frysevarer før Kjøl-reglene, så «frossen …»/«frosne …» og frysepizza alltid går i Frys.
     // (Frys har vært en avdeling siden v0, så eldre versjoner viser disse varene under Frys som før.)
-    ['Frys', /^(grandiosa|grandiosa .*|.* grandiosa|big one|big one .*|frysepizza|frossenpizza|frossen pizza|pizza|dypfryst pizza|fiskepinner|fiskepinne|fiskeburger|fiskeburgere|fiskegrateng|fiskeboller frosne|pommes frites|pommes|potetbåter|rösti|frosne bær|frosne grønnsaker|grønnsaksblanding|wokgrønnsaker|wokblanding|frosne erter|erter|maiskorn frosne|frossen spinat|is|iskrem|isbiter|ispinner|ispinne|saftis|kroneis|sorbet|softis|nuggets|kyllingnuggets|vårruller|kyllingvinger frosne)$/],
+    ['Frys', /^(rundstykker|rundstykke|grandiosa|grandiosa .*|.* grandiosa|big one|big one .*|frysepizza|frossenpizza|frossen pizza|pizza|dypfryst pizza|fiskepinner|fiskepinne|fiskeburger|fiskeburgere|fiskegrateng|fiskeboller frosne|pommes frites|pommes|potetbåter|rösti|frosne bær|frosne grønnsaker|grønnsaksblanding|wokgrønnsaker|wokblanding|frosne erter|erter|maiskorn frosne|frossen spinat|is|iskrem|isbiter|ispinner|ispinne|saftis|kroneis|sorbet|softis|nuggets|kyllingnuggets|vårruller|kyllingvinger frosne)$/],
     ['Frys', /(^|\s)(frossen|frosne|frosset|fryst|dypfryst)(\s|$)|grandiosa|frysepizza|frossenpizza|fiskepinne|iskrem|(vanilje|sjokolade|jordbær|familie|pinne|saft|mango|kokos|nøtte|krone)-?is$/],
-    ['Kjøl', /^(yoghurt|yogurt|kefir|kulturmelk|cultura|skyr|kesam|kvarg|crème fraîche|creme fraiche|smøreost|kremost|brunost|geitost|gulost|norvegia|jarlsberg|ost|mozzarella|fetaost|feta|pålegg|leverpostei|servelat|salami|juice|appelsinjuice|eplejuice|smoothie|syrnet melk|sjokolademelk|iskaffe)$/],
+    ['Kjøl', /^(yoghurt|yogurt|kefir|kulturmelk|cultura|skyr|kesam|kvarg|crème fraîche|creme fraiche|smøreost|kremost|brunost|geitost|gulost|norvegia|jarlsberg|ost|mozzarella|fetaost|feta|pålegg|leverpostei|servelat|salami|skinke|kaviar|juice|appelsinjuice|eplejuice|smoothie|syrnet melk|sjokolademelk|iskaffe)$/],
     ['Kjøl', /(yoghurt|kefir|skyr|kesam|kvarg|ost$|melk$|pålegg|postei)/],
     ['Frys', /^(is|iskrem|isbiter|frossenpizza|frossen pizza|frosne bær|frosne grønnsaker|fiskegrateng|pommes frites)$/],
-    ['Frukt/grønt', /^(eple|epler|pære|pærer|appelsin|appelsiner|klementin|klementiner|mandarin|mandariner|druer|banan|kiwi|mango|melon|vannmelon|ananas|jordbær|bringebær|blåbær|plommer|nektarin|fersken|lime|salat|tomater|grønnkål|reddik|bønnespirer|urter)$/]
+    ['Frukt/grønt', /^(eple|epler|pære|pærer|appelsin|appelsiner|klementin|klementiner|mandarin|mandariner|druer|banan|kiwi|mango|melon|vannmelon|ananas|jordbær|bringebær|blåbær|plommer|nektarin|fersken|lime|salat|tomater|tomat|agurk|agurker|paprika|grønnkål|reddik|bønnespirer|urter|gulrot|gulrøtter|løk|rødløk)$/],
+    // v0.7.1 (Trude): flere vanlige gjettebommer
+    ['Kjøl', /^(skinke|kokt skinke|skinke i skiver|kaviar|macks kaviar|påleggskaviar|leverpostei|servelat|salami|bacon)$/],
+    ['Frys', /^(rundstykker|rundstykke|baguetter|ciabatta)$/],   // v0.7.1: pizzabunn forblir Tørrvare (v0.6.3)
+    ['Hus', /^(matpakkepapir|matpakke papir|smørbrødpapir|smørbrødpapir|vokspapir)$/]
   ];
   function guessAisle(name) {
     var n = normName(name);
@@ -497,18 +506,35 @@
     var a = aisle || guessAisle(name) || 'Tørrvare';
     return (a === 'Tørrvare' || a === 'Hus') ? 'pk' : 'stk';
   }
+  function unitWord(qty, unit) {
+    // v0.7.1: «2 bokser», «1 glass»
+    if (!unit) return '';
+    var n = Number(qty);
+    if (!(n > 1)) return unit;
+    var plur = { boks: 'bokser', glass: 'glass', pk: 'pk', pose: 'poser', rull: 'ruller', kartong: 'kartonger',
+      flaske: 'flasker', beger: 'beger', fedd: 'fedd', bunt: 'bunter', stk: 'stk' };
+    return plur[unit] || unit;
+  }
   function stapleAmt(s) {
     var q = s.qty != null && s.qty !== '' ? formatQty(s.qty) : '';
-    return q + (s.unit ? (q ? ' ' : '') + s.unit : '');
+    if (!s.unit) return q;
+    return q ? (q + ' ' + unitWord(s.qty, s.unit)) : s.unit;
   }
   // v0.7 (Sigurd 2026-10-05): «Som forrige uke» ser tilbake til siste uke som hadde faste varer (f.eks. etter ferie).
   function lastWeekWithFaste(weekKey) {
+    // v0.7.1: bare uker der noen faktisk har valgt (eksplisitt fast:<id>), ikke overgangsuker der alle er «på» via legacy.
     var d = parseIso(weekKey);
     for (var i = 1; i <= 52; i++) {
       var prev = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7 * i);
       var pk = isoDate(mondayOf(prev));
       var adj = state.list_adjust[pk] || {};
-      for (var j = 0; j < state.staples.length; j++) if (stapleChosen(state.staples[j], pk, adj)) return pk;
+      var explicit = false, anyOn = false;
+      for (var j = 0; j < state.staples.length; j++) {
+        var v = adj[FAST_PREFIX + state.staples[j].id];
+        if (v > 0 || v < 0) explicit = true;
+        if (v > 0) anyOn = true;
+      }
+      if (explicit && anyOn) return pk;
     }
     return null;
   }
@@ -1907,7 +1933,9 @@
     closeListMenu(false);
     var prevKey = lastWeekWithFaste(week);
     var prevAdj = prevKey ? (state.list_adjust[prevKey] || {}) : {};
-    var prevN = prevKey ? state.staples.filter(function (s) { return stapleChosen(s, prevKey, prevAdj); }).length : 0;
+    // v0.7.1: når forrige uke hadde eksplisitt valg, kopiér bare de som faktisk var krysset (v>0) – ikke legacy «alle på».
+    function prevExplicitOn(s) { return (prevAdj[FAST_PREFIX + s.id] || 0) > 0; }
+    var prevN = prevKey ? state.staples.filter(prevExplicitOn).length : 0;
     var prevWn = prevKey ? isoWeek(parseIso(prevKey)) : null;
     var checked = {};
     list.forEach(function (x) { checked[x.s.id] = !!x.on; });
@@ -1917,7 +1945,12 @@
     d.id = 'fast-dialog';
     d.className = 'overlay';
     function nChecked() { var n = 0; Object.keys(checked).forEach(function (id) { if (checked[id]) n++; }); return n; }
-    function paint() {
+    function paint(opts) {
+      opts = opts || {};
+      var keepScroll = !!opts.keepScroll;
+      var focusSearch = opts.focusSearch !== false && !keepScroll;   // default: focus on first paint / search; never when keepScroll
+      var bodyEl = d.querySelector('.uv-body');
+      var scrollTop = keepScroll && bodyEl ? bodyEl.scrollTop : 0;
       var n = nChecked(), total = state.staples.length;
       var qn = normName(q), qk = stapleKey(q);
       var rows = state.staples.filter(function (s) {
@@ -1942,12 +1975,21 @@
         body += '<div class="fv-search">' + ICON_SEARCH +
           '<input type="search" id="uv-q" placeholder="Søk …" aria-label="Søk i faste varer" value="' + esc(q) + '" autocomplete="off" data-testid="faste-uke-sok"></div>';
         if (beforeCopy) {
-          body += '<div class="uv-status" data-testid="faste-forrige-status"><span class="ok" aria-hidden="true">✓</span>' +
-            '<span class="t"><b>' + n + ' krysset av som uke ' + prevWn + '.</b> Ta bort det dere har.</span>' +
-            '<button type="button" class="uv-undo" data-fast="undo-prev" data-testid="faste-forrige-angre">Angre</button></div>';
+          // v0.7.1: status oppdateres/forsvinner når valget endres (ikke «som uke X» etter manuell endring)
+          var matchesPrev = prevKey && state.staples.every(function (s) {
+            return !!checked[s.id] === prevExplicitOn(s);
+          });
+          if (matchesPrev) {
+            body += '<div class="uv-status" data-testid="faste-forrige-status"><span class="ok" aria-hidden="true">✓</span>' +
+              '<span class="t"><b>' + n + ' krysset av som uke ' + prevWn + '.</b> Ta bort det dere har.</span>' +
+              '<button type="button" class="uv-undo" data-fast="undo-prev" data-testid="faste-forrige-angre">Angre</button></div>';
+          } else {
+            body += '<div class="uv-status" data-testid="faste-forrige-status"><span class="t"><b>' + n + ' krysset av.</b></span>' +
+              '<button type="button" class="uv-undo" data-fast="undo-prev" data-testid="faste-forrige-angre">Angre</button></div>';
+          }
         } else if (prevKey && prevN) {
           // Vis knappen bare når forrige valg er forskjellig fra nåværende
-          var same = state.staples.every(function (s) { return !!checked[s.id] === stapleChosen(s, prevKey, prevAdj); });
+          var same = state.staples.every(function (s) { return !!checked[s.id] === prevExplicitOn(s); });
           if (!same) {
             body += '<button type="button" class="uv-prev" data-fast="prev" data-testid="faste-forrige">' + ICON_REPEAT +
               '<span class="t"><b>Som forrige uke</b><span>Kryss av de ' + prevN + ' dere valgte i uke ' + prevWn + '</span></span></button>';
@@ -1976,52 +2018,68 @@
         (n ? 'Legg ' + n + ' på lista' : 'Lagre – ingen på lista') + '</button></div>') : '';
       d.innerHTML = '<div class="sheet basis-sheet uv-sheet" role="dialog" aria-modal="true" aria-labelledby="fast-h" data-week="' + week + '">' +
         '<div class="uv-body">' + body + '</div>' + foot + '</div>';
+      if (keepScroll) {
+        var nb = d.querySelector('.uv-body');
+        if (nb) nb.scrollTop = scrollTop;
+      }
       var sq = d.querySelector('#uv-q');
-      if (sq) { sq.focus(); sq.setSelectionRange(sq.value.length, sq.value.length); }
+      if (sq && focusSearch) { sq.focus(); sq.setSelectionRange(sq.value.length, sq.value.length); }
     }
-    paint();
+    paint({ focusSearch: false });   // første fokus settes under (første checkbox / søk)
     document.body.appendChild(d);
     d.addEventListener('input', function (e) {
-      if (e.target.id === 'uv-q') { q = e.target.value; paint(); return; }
+      if (e.target.id === 'uv-q') { q = e.target.value; paint({ focusSearch: true }); return; }
       var cb = e.target.closest('input[data-sid]');
-      if (cb) { checked[cb.getAttribute('data-sid')] = cb.checked; paint(); }
+      if (cb) {
+        checked[cb.getAttribute('data-sid')] = cb.checked;
+        // v0.7.1: ikke hopp til toppen / ikke fokus i søk (Trude: 15/16 kryss)
+        paint({ keepScroll: true, focusSearch: false });
+      }
     });
     d.addEventListener('click', function (e) {
-      if (e.target === d) { closeSheet('fast-dialog', true); return; }
+      if (e.target === d) { dismissFast(true); return; }
       var btn = e.target.closest('[data-fast]');
       if (!btn) return;
       var a = btn.getAttribute('data-fast');
-      if (a === 'close') { closeSheet('fast-dialog', true); return; }
-      if (a === 'edit') { closeSheet('fast-dialog', false); location.hash = '#liste/faste'; return; }
+      if (a === 'close') { dismissFast(true); return; }
+      if (a === 'edit') { dismissFast(false); location.hash = '#liste/faste'; return; }
       if (a === 'prev' && prevKey) {
         beforeCopy = JSON.parse(JSON.stringify(checked));
-        state.staples.forEach(function (s) { checked[s.id] = stapleChosen(s, prevKey, prevAdj); });
-        paint(); return;
+        state.staples.forEach(function (s) { checked[s.id] = prevExplicitOn(s); });
+        paint({ focusSearch: false, keepScroll: true }); return;
       }
-      if (a === 'undo-prev' && beforeCopy) { checked = beforeCopy; beforeCopy = null; paint(); return; }
+      if (a === 'undo-prev' && beforeCopy) { checked = beforeCopy; beforeCopy = null; paint({ focusSearch: false, keepScroll: true }); return; }
       if (a === 'add-q' && q.trim()) {
         var ga = guessAisle(q) || 'Tørrvare', gu = guessUnit(q, ga);
         var id = uid('s');
         ops.addStaple({ id: id, name: q.trim(), qty: 1, unit: gu, aisle: ga, active: true });
         checked[id] = true;
-        paint(); return;
+        paint({ focusSearch: false }); return;
       }
       if (a === 'save') {
         var map = {}, n = 0;
         state.staples.forEach(function (s) { map[s.id] = checked[s.id] ? 1 : -1; if (checked[s.id]) n++; });
         ops.setFast(week, map);
-        closeSheet('fast-dialog', false);
+        dismissFast(false);
         flipRender();
         closeSheet.refocus();
         toast(n ? n + (n === 1 ? ' fast vare' : ' faste varer') + ' på lista for uke ' + wn : 'Ingen faste varer på lista for uke ' + wn);
       }
     });
-    d.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') { e.preventDefault(); closeSheet('fast-dialog', true); return; }
+    function dismissFast(restore) {
+      document.removeEventListener('keydown', onFastKey, true);
+      closeSheet('fast-dialog', restore);
+    }
+    function onFastKey(e) {
+      if (!document.getElementById('fast-dialog')) return;
+      if (e.key === 'Escape') { e.preventDefault(); dismissFast(true); return; }
       if (e.key === 'Tab') trapTab(d, e);
-    });
-    var first = d.querySelector('.uv-row input') || d.querySelector('#uv-q') || d.querySelector('[data-fast="close"]');
-    if (first) first.focus();
+    }
+    document.addEventListener('keydown', onFastKey, true);
+    d.addEventListener('keydown', onFastKey);
+    // v0.7.1: fokus på første avkrysning (ikke søk) – Esc virker via document-capture, tastatur åpnes ikke
+    var first = d.querySelector('.uv-row input') || d.querySelector('[data-fast="close"]');
+    if (first) try { first.focus({ preventScroll: true }); } catch (err) { first.focus(); }
   }
 
   function closeSheet(id, restoreFocus) {
@@ -2470,7 +2528,9 @@
           '<span class="t">' + esc(bridge) + '</span><span class="go" aria-hidden="true">' + (nOn ? 'Endre ›' : 'Velg ›') + '</span></button>';
       }
       if (qn && exact) {
-        h += '<p class="fv-msg" data-testid="faste-finnes">«' + esc(cap(q)) + '» finnes allerede («' + esc(cap(exact.name)) + '» er samme vare), så det blir ingen ny. Trykk på den for å endre.</p>';
+        h += '<p class="fv-msg" data-testid="faste-finnes">«' + esc(cap(q)) + '» finnes allerede' +
+          (normName(q) === normName(exact.name) ? '' : ' («' + esc(cap(exact.name)) + '» er samme vare)') +
+          ', så det blir ingen ny. Trykk på den for å endre.</p>';
       } else if (qn && !exact) {
         var ga = guessAisle(q) || 'Tørrvare', gu = guessUnit(q, ga);
         h += '<p class="fv-hit">Ingen faste varer heter «' + esc(q) + '».</p>';
@@ -2775,7 +2835,7 @@
         var ix = AISLES.indexOf(curA); card2.setAttribute('data-aisle', AISLES[(ix + 1) % AISLES.length]);
       } else {
         var curU = card2.getAttribute('data-unit') || 'stk';
-        var units = ['stk', 'pk', 'l', 'kartong', 'beger', 'flaske', 'rull', 'pose', 'boks'];
+        var units = ['stk', 'pk', 'l', 'kartong', 'beger', 'flaske', 'glass', 'rull', 'pose', 'boks'];
         var ux = units.indexOf(curU); card2.setAttribute('data-unit', units[(ux + 1) % units.length]);
       }
       // Oppdater brikkene uten full omtegning (behold søketekst og fokus)
