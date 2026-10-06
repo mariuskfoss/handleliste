@@ -1,4 +1,4 @@
-/* Knaggen (arbeidsnavn Ukeshandel) v0.7.1 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Knaggen (arbeidsnavn Ukeshandel) v0.8.0 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -39,7 +39,7 @@
   var state = null;
   var memoryOnly = false;
   var hadLocalData = false;
-  var ui = { weekOffset: 0, weekTouched: false, staplesOpen: false, addOpen: false, welcomeClosed: false, welcomeShown: false, sort: lsGet(SORT_KEY) === 'kilde' ? 'kilde' : 'butikk', notice: '', justCreated: false, busy: false, error: '', fvOpenId: null, fvOpenAisle: null, fvQ: '' };   // v0.7: fv* = faste-varer-siden
+  var ui = { weekOffset: 0, weekTouched: false, staplesOpen: false, addOpen: false, welcomeClosed: false, welcomeShown: false, sort: lsGet(SORT_KEY) === 'kilde' ? 'kilde' : 'butikk', notice: '', justCreated: false, busy: false, error: '', fvOpenId: null, fvOpenAisle: null, fvQ: '', hsDayDate: null, hsSheet: null };   // v0.7 fv* / v0.8 hs*
   var Sync = window.UkeshandelSync || null;
   var hh = null;             // husstandsinfo når vi er i husstandsmodus
   var syncReady = null;      // promise: SDK lastet, innlogget, medlemskap sjekket
@@ -244,7 +244,11 @@
     if (!a || a === document.body || a === main || !main.contains(a)) return;
     var dock = dockEl(); if (!dock) return;
     var top = dock.getBoundingClientRect().top, r = a.getBoundingClientRect();
-    if (r.height && r.bottom > top - 4) window.scrollBy(0, Math.ceil(r.bottom - top + TOAST_GAP));
+    // Bare synlige elementer – ellers kan et fokusert felt langt under folden gi stort hopp (v0.8 høyere dagrader)
+    if (!r.height || r.bottom <= 0 || r.top >= window.innerHeight) return;
+    var dy = Math.ceil(r.bottom - top + TOAST_GAP);
+    // maks én skjermhøyde – unngå hopp når fokus er på et stort/feil element
+    if (dy > 0 && dy < window.innerHeight * 0.5) window.scrollBy(0, dy);
   }
   var placeQueued = false;
   function queuePlaceToast() {
@@ -300,7 +304,9 @@
       checks: {},           // week -> { varenøkkel: true }
       list_items: [],       // generert handleliste (week = mandag), beholdt for eldre versjoner
       list_adjust: {},      // week -> { varenøkkel -> endring i mengde (+/-) }
-      list_extras: []       // engangsvarer lagt til i lista { id, week, name, qty, unit, aisle }
+      list_extras: [],      // engangsvarer lagt til i lista { id, week, name, qty, unit, aisle }
+      household_size: { people: null, scale: true, asked: false },  // v0.8
+      day_people: {}   // v0.8: date -> { voksen, barn, smabarn } avvik
     };
   }
   function emptyState() {
@@ -325,6 +331,10 @@
     s.list_items = Array.isArray(s.list_items) ? s.list_items : [];
     s.list_adjust = s.list_adjust && typeof s.list_adjust === 'object' ? s.list_adjust : {};
     s.list_extras = Array.isArray(s.list_extras) ? s.list_extras : [];
+    s.household_size = s.household_size && typeof s.household_size === 'object'
+      ? { people: s.household_size.people || null, scale: s.household_size.scale !== false, asked: !!s.household_size.asked }
+      : { people: null, scale: true, asked: false };
+    s.day_people = s.day_people && typeof s.day_people === 'object' ? s.day_people : {};
     // Eldste v0-format: avkrysning lå i list_items + list_week uten week per vare.
     if (s.list_week) {
       s.list_items.forEach(function (it) { if (!it.week) it.week = s.list_week; });
@@ -365,13 +375,16 @@
       if (s && typeof s === 'object' && Array.isArray(s.recipes)) {
         hadLocalData = true;
         state = migrate(s, raw);
-        save();
+        // v0.8: merk Knaggen-retter i minnet; ikke skriv localStorage på nytt bare for origin/servings
+        // (oppgraderingstester og «egne data»-sjekk skal ikke se en omskrivning ved første last)
+        tagKnaggenRecipes();
         return state;
       }
       // Uleselige data: ta vare på dem før vi starter på nytt.
       lsSet(STORAGE_KEY + ':corrupt-' + Date.now(), raw);
     }
     state = freshState();
+    tagKnaggenRecipes();
     save();
     return state;
   }
@@ -380,7 +393,11 @@
   function meaningful(st) {
     var clean = function (o) { var r = {}; Object.keys(o || {}).sort().forEach(function (k) { if (o[k] && !(typeof o[k] === 'object' && !Object.keys(o[k]).length)) r[k] = o[k]; }); return r; };
     var byWeek = function (o) { var r = {}; Object.keys(o || {}).sort().forEach(function (w) { var c = clean(o[w]); if (Object.keys(c).length) r[w] = c; }); return r; };
-    return JSON.stringify([st.recipes, st.staples, clean(st.week_plan), clean(st.oneoffs), byWeek(st.checks), byWeek(st.list_adjust), st.list_extras || []]);
+    // v0.8: origin/servings/scale er merking – teller ikke som «egne data» (ellers forsvinner velkomstkortet)
+    var recipes = (st.recipes || []).map(function (r) {
+      return { id: r.id, name: r.name, minutes: r.minutes, note: r.note, ingredients: r.ingredients };
+    });
+    return JSON.stringify([recipes, st.staples, clean(st.week_plan), clean(st.oneoffs), byWeek(st.checks), byWeek(st.list_adjust), st.list_extras || []]);
   }
   function hasOwnData() {
     if (hh) return false;
@@ -577,7 +594,8 @@
     saveMirror.t = setTimeout(function () {
       lsSet(MIRROR_PREFIX + hh.hid, JSON.stringify({
         recipes: state.recipes, staples: state.staples, week_plan: state.week_plan, oneoffs: state.oneoffs,
-        checks: state.checks, list_adjust: state.list_adjust, list_extras: state.list_extras
+        checks: state.checks, list_adjust: state.list_adjust, list_extras: state.list_extras,
+        household_size: state.household_size, day_people: state.day_people
       }));
     }, 300);
   }
@@ -651,12 +669,16 @@
     unsubscribe = Sync.subscribe(hh.hid, oldestWeek(), {
       recipes: function (docs) {
         state.recipes = docs.map(function (d) {
-          return { id: d.id, name: d.name, minutes: d.minutes == null ? null : d.minutes, note: d.note || '',
+          var rr = { id: d.id, name: d.name, minutes: d.minutes == null ? null : d.minutes, note: d.note || '',
             ingredients: (d.ingredients || []).map(function (i) {
               var o = { name: i.name, qty: i.qty == null ? null : i.qty, unit: i.unit || '', aisle: normAisle(i.aisle) };
               if (typeof i.basis === 'boolean') o.basis = i.basis;   // v0.4.3
               return o;
             }) };
+          if (d.origin) rr.origin = d.origin;
+          if (d.servings != null) rr.servings = d.servings;
+          if (d.scale === false) rr.scale = false;
+          return rr;
         });
         remoteChanged();
       },
@@ -685,6 +707,27 @@
       },
       extras: function (docs) {
         state.list_extras = docs.map(function (d) { return { id: d.id, week: d.week, name: d.name, qty: d.qty, unit: d.unit || '', aisle: normAisle(d.aisle), created: d.created }; });
+        remoteChanged();
+      },
+      settings: function (docs) {
+        var doc = docs.filter(function (d) { return d.id === 'household'; })[0];
+        if (doc) {
+          state.household_size = {
+            people: doc.people || null,
+            scale: doc.scale !== false,
+            asked: !!doc.asked
+          };
+          if (doc.asked) lsSet(HS_ASKED_KEY, '1');
+        }
+        remoteChanged();
+      },
+      daypeople: function (docs) {
+        var m = {};
+        docs.forEach(function (d) {
+          if (d.delta && (d.delta.voksen || d.delta.barn || d.delta.smabarn))
+            m[d.date || d.id] = { voksen: d.delta.voksen | 0, barn: d.delta.barn | 0, smabarn: d.delta.smabarn | 0 };
+        });
+        state.day_people = m;
         remoteChanged();
       },
       status: function (st) {
@@ -846,11 +889,22 @@
 
   function renderHousehold() {
     var h = '<section class="page" data-page="husstand">';
+    var hp = hsPeople() || { voksen: 2, barn: 2, smabarn: 0 };
+    var hasP = !!hsPeople();
+    h += '<div class="page-head"><h2>Husstand</h2><a class="btn" href="#uke">Tilbake</a></div>';
+    h += '<p class="hs-h">Hvem spiser middag</p>';
+    h += peopleCountersHtml('hsh', hasP ? hsPeople() : hp, { testid: 'hs-innstillinger' });
+    var scalePref = hsState().scale !== false;
+    h += '<button type="button" class="hs-switch" role="switch" data-action="hs-scale-toggle" aria-checked="' + (scalePref ? 'true' : 'false') + '" data-testid="hs-tilpass-bryter">' +
+      '<div class="t"><b>Tilpass retter fra Knaggen</b><span>Egne retter endres ikke</span></div>' +
+      '<span class="sw' + (scalePref ? ' on' : '') + '" aria-hidden="true"></span></button>';
+    h += '<p class="hs-note">Vektene følger Helsedirektoratets energibehov (omtrent). Under 1 år telles ikke.</p>';
+    h += '<div class="form-actions plain"><button type="button" class="btn primary" data-action="hs-lagre-innstillinger" data-testid="hs-lagre">Lagre</button></div>';
     if (hh) {
-      h += '<div class="page-head"><h2>Husstand</h2></div>';
       if (ui.justCreated) {
         h += '<p class="notice" data-testid="opprettet">Husstanden er opprettet' + (ui.movedOwn ? ', og rettene, uka og lista fra denne telefonen er flyttet inn.' : '.') + '</p>';
       }
+      h += '<p class="hs-h">Deling</p>';
       h += '<p>Send denne lenka til den du handler med. Når den åpnes på en annen telefon, ser dere de samme rettene, uka og lista.</p>' +
         '<label class="field"><span>Delingslenke</span><input type="text" id="share-link" readonly value="' + esc(shareLink()) + '"></label>' +
         '<div class="form-actions plain"><button type="button" class="btn primary" data-action="copy-link" data-testid="kopier-lenke">Kopier lenke</button>' +
@@ -1339,6 +1393,7 @@
     if (recipeById('lib-' + id) || libCandidates().indexOf(id) < 0) { toast('«' + x.name + '» finnes allerede i rettene'); renderRetter(); return; }
     ops.saveRecipe({
       id: 'lib-' + x.id, name: x.name, minutes: x.minutes || null, note: x.note || '',
+      origin: 'knaggen', servings: x.servings || 4,
       ingredients: x.ingredients.map(function (i) { return { name: i.name, qty: i.qty, unit: i.unit, aisle: normAisle(i.aisle) }; })
     }, true);
     lib.anim = ' from-right';
@@ -1468,6 +1523,14 @@
         '<p class="welcome-t">Velg middager for uka, så lager handlelista seg selv.</p>' +
         '<p class="welcome-tag">Husets felles huskeliste</p>' +
         '<button type="button" class="welcome-x" data-action="welcome-close" data-testid="velkomst-lukk" aria-label="Lukk velkomsten">×</button></section>';
+    } else if (showHsCard()) {
+      h += '<section class="hs-card" data-testid="hs-forste" aria-label="Husstandens størrelse">' +
+        '<h3>Hvor mange spiser middag hos dere?</h3>' +
+        '<p class="lead">Da passer mengdene i rettene fra Knaggen. Retter dere har lagt inn selv, endres ikke.</p>' +
+        peopleCountersHtml('hs0', { voksen: 2, barn: 2, smabarn: 0 }) +
+        '<div class="hs-acts">' +
+        '<button type="button" class="btn primary" data-action="hs-bruk" data-testid="hs-bruk">Bruk</button>' +
+        '<button type="button" class="btn ghost" data-action="hs-hopp" data-testid="hs-hopp">Hopp over</button></div></section>';
     }
     h += weekNav(dates);
     h += '<div class="week-tools"><p class="summary" data-testid="uke-oppsummering">' + count + ' av 7 kvelder har middag</p>' +
@@ -1479,7 +1542,14 @@
       var sel = state.week_plan[d];
       var r = !o && sel ? recipeById(sel) : null;
       var dn = o ? o.name : r ? r.name : '';
-      h += '<li class="day' + (d === today ? ' today' : '') + (r || o ? '' : ' is-empty') + (o ? ' has-oneoff' : '') +
+      var devCls = '';
+      if (r && !o && dayDelta(d)) {
+        var _dd = dayDelta(d), _net = SC.netPeople(_dd);
+        var _up = _net > 0 && (_dd.voksen||0) >= 0 && (_dd.barn||0) >= 0 && (_dd.smabarn||0) >= 0;
+        var _dn = _net < 0 && (_dd.voksen||0) <= 0 && (_dd.barn||0) <= 0 && (_dd.smabarn||0) <= 0;
+        devCls = _up ? ' dev-pluss' : _dn ? ' dev-minus' : ' dev-endret';
+      }
+      h += '<li class="day' + (d === today ? ' today' : '') + (r || o ? '' : ' is-empty') + (o ? ' has-oneoff' : '') + devCls +
         (swapFrom === d ? ' swap-from' : swapFrom ? ' swap-target' : '') + '" data-date="' + d + '">' +
         '<label for="day-' + d + '" class="day-label"><span class="dname">' + DAY_NAMES[i] + '</span>' +
         '<span class="ddate">' + shortDate(d) + (d === today ? ' · i dag' : '') + '</span></label>';
@@ -1506,8 +1576,17 @@
           if (r.minutes) meta.push(r.minutes + ' min');
           if (r.note) meta.push(r.note);
         }
-        h += '<div class="day-foot"><span class="day-meta">' + esc(meta.join(' · ')) + '</span>' +
-          (r ? '' : '<a class="linkbtn" href="#uke/engang/' + d + '">+ Engangsmiddag</a>') + '</div>';
+        var fTag = '';
+        if (r && !o) {
+          var ff = dayFactor(d, r);
+          if (hsPeople() && ff !== 1 && ff !== 'Tom' && SC.isKnaggen(r) && hsScaleOn())
+            fTag = ' <span class="hs-tag" data-testid="hs-tilpasset">Tilpasset ' + SC.fmt(ff) + '</span>';
+        }
+        var chip = (!o && r) ? chipHtml(d, r) : '';
+        var endre = (!o && r && !dayDelta(d)) ? '<button type="button" class="linkbtn" data-action="hs-day" data-date="' + d + '" data-testid="hs-endre">Endre hvem som spiser</button>' : '';
+        h += '<div class="day-foot"><span class="day-meta">' + esc(meta.join(' · ')) + fTag + '</span>' +
+          (r ? endre : '<a class="linkbtn" href="#uke/engang/' + d + '">+ Engangsmiddag</a>') + '</div>' + chip;
+
       }
       h += '</li>';
     });
@@ -1540,6 +1619,12 @@
   function setDay(date, recipeId) {
     ui.swap = null;
     if (recipeId === '__oneoff__') { location.hash = '#uke/engang/' + date; return; }
+    if (!recipeId) {
+      if (state.day_people[date]) {
+        delete state.day_people[date]; save();
+        remote(function (w, hid) { return w.deleteDayPeople(hid, date); });
+      }
+    }
     if (recipeId) {
       // v0.4.4: retten er brukt en annen dag i uka -> flytt den hit (bytt med det som står her).
       var dates = weekDates(ui.weekOffset);
@@ -1726,7 +1811,10 @@
       var r = o || (state.week_plan[d] ? recipeById(state.week_plan[d]) : null);
       if (!r) return;
       dinners++;
-      var g = { id: d, date: d, title: dayName(d) + ' · ' + r.name, rows: [], rmap: {}, skipped: 0 };
+      if (o) r = { name: o.name, ingredients: o.ingredients, _oneoff: true, id: o.id };
+      var f0 = o ? 1 : dayFactor(d, r);
+      var fMark = (f0 && f0 !== 1 && f0 !== 'Tom') ? SC.fmt(f0) : '';
+      var g = { id: d, date: d, title: dayName(d) + ' · ' + r.name + (fMark ? ' ' + fMark : ''), rows: [], rmap: {}, skipped: 0, factor: f0 };
       srcGroups.push(g);
       r.ingredients.forEach(function (i) {
         var nn = normName(i.name);
@@ -1739,15 +1827,26 @@
     var basisMap = {}, basisAdded = {};
     dinnerIngs.forEach(function (x) {
       var c = occ[x.nn];
+      // v0.8: skaler middagsmengder (ikke engangsmiddag)
+      var f = 1;
+      if (!x.r._oneoff) {
+        f = dayFactor(x.g.date || x.g.id, x.r);
+        if (f === 'Tom') f = 0;
+      }
+      var sq = (f && f !== 1) ? scaleQty(x.i.qty, x.i.unit, f, x.nn) : x.i.qty;
+      if (f && f !== 1) x.g.factor = f;
       if (c.b === c.n) {
         var b = basisMap[x.nn];
         if (!b) b = basisMap[x.nn] = { nn: x.nn, name: String(x.i.name).trim(), recipes: [], entries: [], choice: adjW[BASIS_PREFIX + x.nn] || 0 };
         if (b.recipes.indexOf(x.r.name) < 0) b.recipes.push(x.r.name);
-        b.entries.push({ qty: x.i.qty, unit: x.i.unit });
-        if (b.choice !== 1) { x.g.skipped++; return; }   // ikke valgt (eller «ikke nå») → ikke på lista
+        b.entries.push({ qty: sq, unit: x.i.unit });
+        if (b.choice !== 1) { x.g.skipped++; return; }
         basisAdded[x.nn] = true;
       }
-      srcRow(x.g, 'dinner', add('dinner', x.r.name, x.i.name, x.i.qty, x.i.unit, x.i.aisle), x.i.name, x.i.qty, x.i.unit);
+      // v0.8: «×1¼» bak rettenavnet i kildelinja (Merkevare husstand §)
+      var fromLab = x.r.name;
+      if (f && f !== 1 && f !== 'Tom') fromLab += ' ' + SC.fmt(f);
+      srcRow(x.g, 'dinner', add('dinner', fromLab, x.i.name, sq, x.i.unit, x.i.aisle), x.i.name, sq, x.i.unit);
     });
     var basis = Object.keys(basisMap).map(function (nn) { var b = basisMap[nn]; b.amount = basisAmount(nn, b.entries); return b; })
       .sort(function (a, b) { return a.name.localeCompare(b.name, 'nb'); });
@@ -1832,6 +1931,304 @@
     return weekKey < STAPLES_OPTIN_FROM && s.active !== false;
   }
   var currentList = [];
+  /* ---------- v0.8 Husstandens størrelse ---------- */
+  var SC = window.UKESHANDEL_SCALE;
+  var HS_ASKED_KEY = 'ukeshandel:hsAsked'; // lokal-only backup; husstand synker asked i settings
+
+  function hsState() {
+    return state.household_size || { people: null, scale: true, asked: false };
+  }
+  function hsPeople() {
+    var h = hsState();
+    return h.people || null;
+  }
+  function hsScaleOn() {
+    var h = hsState();
+    return !!(h.people && h.scale !== false);
+  }
+  function hsAsked() {
+    return !!(hsState().asked || lsGet(HS_ASKED_KEY) === '1');
+  }
+  function dayDelta(date) {
+    var d = state.day_people && state.day_people[date];
+    return d && SC.hasDelta(d) ? d : null;
+  }
+  function dayFactor(date, recipe) {
+    var people = hsPeople();
+    var delta = dayDelta(date);
+    var kn = recipe && !recipe._oneoff && SC.isKnaggen(recipe);
+    var B = SC.servingsOf(recipe || {});
+    try {
+      return SC.faktor(!!kn, hsScaleOn(), people, delta, B);
+    } catch (e) {
+      return 1;
+    }
+  }
+  function scaleQty(qty, unit, f, nn) {
+    if (f == null || f === 1 || f === 'Tom' || qty == null || !isFinite(qty)) return qty;
+    var pack = !!(U.packFor && U.packFor(nn));
+    return SC.skalerIngrediens(qty, U.normUnit(unit) || unit || '', f, pack);
+  }
+  function ingKey(i) {
+    return normName(i.name) + '|' + (i.qty == null ? '' : String(i.qty)) + '|' + (i.unit || '');
+  }
+  function seedIngSig(r) {
+    return (r.ingredients || []).map(ingKey).sort().join(';');
+  }
+  // Merk startretter som Knaggen hvis ingrediensene fortsatt matcher seed (Sigurd).
+
+  function openDayPeopleSheet(date) {
+    ui.hsDayDate = date;
+    var usual = hsPeople();
+    var delta = dayDelta(date) || { voksen: 0, barn: 0, smabarn: 0 };
+    var cur = usual
+      ? { voksen: Math.max(0, (usual.voksen||0)+delta.voksen), barn: Math.max(0, (usual.barn||0)+delta.barn), smabarn: Math.max(0, (usual.smabarn||0)+delta.smabarn) }
+      : { voksen: Math.max(0, delta.voksen), barn: Math.max(0, delta.barn), smabarn: Math.max(0, delta.smabarn) };
+    var ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.innerHTML = '<div class="sheet hs-sheet" role="dialog" aria-modal="true" data-testid="hs-dag-ark">' +
+      '<div class="sheet-head"><h3>Hvem spiser ' + esc(dayLabel(date).toLowerCase()) + '?</h3>' +
+      '<button type="button" class="icon-btn" data-action="hs-ark-lukk" aria-label="Lukk">✕</button></div>' +
+      (usual ? '' : '<p class="hint">Husstanden er ikke satt – regnet som 4. <a href="#husstand">Sett husstanden</a> for å kunne velge færre.</p>') +
+      peopleCountersHtml('hsd', cur, { usual: usual || { voksen: 0, barn: 0, smabarn: 0 }, dayMode: true, noFewer: !usual, testid: 'hs-dag-folk' }) +
+      '<div class="hs-result" data-testid="hs-dag-resultat"><span>Oppdateres mens du teller</span></div>' +
+      '<div class="hs-sheet-acts">' +
+      '<button type="button" class="btn primary" data-action="hs-dag-lagre" data-date="' + date + '" data-testid="hs-dag-lagre">Lagre</button>' +
+      '<button type="button" class="btn" data-action="hs-ark-lukk">Avbryt</button></div>' +
+      (dayDelta(date) ? '<button type="button" class="btn hs-reset" data-action="hs-dag-reset" data-date="' + date + '" data-testid="hs-tilbakestill">Tilbakestill til husstanden</button>' : '') +
+      '</div>';
+    document.body.appendChild(ov);
+    updateDaySheetResult(date);
+    var focusBtn = ov.querySelector('[data-hs-step="1"]');
+    if (focusBtn) try { focusBtn.focus(); } catch (e) {}
+  }
+  function updateDaySheetResult(date) {
+    var box = document.querySelector('[data-testid="hs-dag-resultat"]');
+    if (!box) return;
+    var cur = readCounters('hsd');
+    var usual = hsPeople();
+    var delta = usual
+      ? { voksen: cur.voksen - (usual.voksen||0), barn: cur.barn - (usual.barn||0), smabarn: cur.smabarn - (usual.smabarn||0) }
+      : cur;
+    var r = state.week_plan[date] ? recipeById(state.week_plan[date]) : null;
+    var f = 'Tom';
+    try { f = SC.faktor(!!(r && SC.isKnaggen(r)), hsScaleOn(), usual, delta, SC.servingsOf(r || {})); } catch (e) { f = 1; }
+    var dn = dayLabel(date);
+    if (SC.porsjoner(cur) === 0 && usual) {
+      box.innerHTML = '<b>Ingen spiser hjemme ' + esc(dn.toLowerCase()) + '</b><span class="m">Retten tas av, og varene går av lista.</span>';
+      var btn = document.querySelector('[data-testid="hs-dag-lagre"]');
+      if (btn) { btn.textContent = 'Sett ' + dn.toLowerCase() + ' til Tom'; btn.setAttribute('data-action', 'hs-dag-tom'); }
+      return;
+    }
+    var btn = document.querySelector('[data-testid="hs-dag-lagre"]');
+    if (btn) { btn.textContent = 'Lagre'; btn.setAttribute('data-action', 'hs-dag-lagre'); }
+    var usualF = r ? dayFactor(date, Object.assign({}, r, {})) : 1;
+    // usual factor without delta
+    var uf = 1;
+    try { uf = SC.faktor(!!(r && SC.isKnaggen(r)), hsScaleOn(), usual, null, SC.servingsOf(r || {})); } catch (e) {}
+    box.innerHTML = '<span>' + esc(dn) + ' lages for <b>' + esc(SC.peopleText(cur, true)) + '</b> · <b>' + (f === 'Tom' ? 'Tom' : SC.fmt(f)) + '</b>' +
+      (uf !== 1 && uf !== 'Tom' ? ' (vanlig ' + SC.fmt(uf) + ')' : '') + '</span>' +
+      '<span class="m">Gjelder bare ' + esc(dn.toLowerCase()) + '.</span>';
+  }
+
+  function closeOverlay() {
+    var ov = document.querySelector('.overlay:not([hidden])');
+    if (ov) { ov.hidden = true; if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    ui.hsDayDate = null; ui.hsSheet = null;
+  }
+  function tagKnaggenRecipes() {
+    var seed = window.UKESHANDEL_SEED && window.UKESHANDEL_SEED();
+    if (!seed || !seed.recipes) return;
+    var byId = {};
+    seed.recipes.forEach(function (r) { byId[r.id] = r; });
+    var libByName = {};
+    if (window.UKESHANDEL_LIBRARY) {
+      ((window.UKESHANDEL_LIBRARY || []) || []).forEach(function (r) { libByName[normName(r.name)] = r; });
+    }
+    state.recipes.forEach(function (r) {
+      if (r.origin === 'knaggen' || r.scale === false) {
+        if (r.servings == null && libByName[normName(r.name)]) r.servings = libByName[normName(r.name)].servings || 4;
+        return;
+      }
+      if (/^lib-/.test(r.id)) {
+        r.origin = 'knaggen';
+        var lib = null;
+        if (window.UKESHANDEL_LIBRARY) {
+          var lid = r.id.replace(/^lib-/, '');
+          ((window.UKESHANDEL_LIBRARY || []) || []).some(function (x) { if (x.id === lid) { lib = x; return true; } });
+        }
+        if (lib && lib.servings) r.servings = lib.servings;
+        else if (r.servings == null) r.servings = 4;
+        return;
+      }
+      var s = byId[r.id];
+      if (s && seedIngSig(s) === seedIngSig(r)) {
+        r.origin = 'knaggen';
+        // Seed-Lasagne: «dobbel porsjon» → 8; ellers 4
+        r.servings = /lasagne/i.test(r.name) && /dobbel/i.test(s.note || '') ? 8 : 4;
+      }
+    });
+  }
+  function saveHouseholdSize(next, opts) {
+    opts = opts || {};
+    var prev = JSON.parse(JSON.stringify(hsState()));
+    state.household_size = {
+      people: next.people ? { voksen: next.people.voksen | 0, barn: next.people.barn | 0, smabarn: next.people.smabarn | 0 } : null,
+      scale: next.scale !== false,
+      asked: next.asked !== false
+    };
+    if (state.household_size.asked) lsSet(HS_ASKED_KEY, '1');
+    save();
+    remote(function (w, hid) { return w.setHouseholdSettings(hid, state.household_size); });
+    if (opts.toast !== false) {
+      var p = state.household_size.people;
+      if (p) toast('Retter fra Knaggen er tilpasset ' + SC.peopleText(p, true), 8000, function () {
+        state.household_size = prev;
+        save();
+        remote(function (w, hid) { return w.setHouseholdSettings(hid, state.household_size); });
+        route();
+      });
+    }
+    route();
+  }
+  function saveDayPeople(date, delta, opts) {
+    opts = opts || {};
+    var prev = state.day_people[date] ? JSON.parse(JSON.stringify(state.day_people[date])) : null;
+    var clean = {
+      voksen: (delta && delta.voksen) | 0,
+      barn: (delta && delta.barn) | 0,
+      smabarn: (delta && delta.smabarn) | 0
+    };
+    if (!SC.hasDelta(clean)) {
+      delete state.day_people[date];
+      save();
+      remote(function (w, hid) { return w.deleteDayPeople(hid, date); });
+    } else {
+      // 0 personer → sett Tom, ikke lagre avvik
+      var eff = SC.effectivePeople(hsPeople() || { voksen: 0, barn: 0, smabarn: 0 }, clean);
+      if (hsPeople() && SC.porsjoner(eff) === 0) {
+        return clearDayToEmpty(date, prev, clean);
+      }
+      state.day_people[date] = clean;
+      save();
+      remote(function (w, hid) { return w.setDayPeople(hid, date, clean); });
+    }
+    if (opts.toast !== false) {
+      var msg = opts.toastMsg || (dayLabel(date) + ' er oppdatert');
+      toast(msg, 8000, function () {
+        if (prev) state.day_people[date] = prev;
+        else delete state.day_people[date];
+        save();
+        remote(function (w, hid) {
+          return prev ? w.setDayPeople(hid, date, prev) : w.deleteDayPeople(hid, date);
+        });
+        route();
+      });
+    }
+    closeOverlay();
+    route();
+  }
+  function clearDayToEmpty(date, prevDelta, attempted) {
+    var prevPlan = state.week_plan[date] || null;
+    var prevOne = state.oneoffs[date] ? JSON.parse(JSON.stringify(state.oneoffs[date])) : null;
+    ops.setDays([{ date: date, recipe_id: null, oneoff: null }]);
+    delete state.day_people[date];
+    save();
+    remote(function (w, hid) { return w.deleteDayPeople(hid, date); });
+    toast(dayLabel(date) + ' er satt til Tom', 8000, function () {
+      ops.setDays([{ date: date, recipe_id: prevPlan, oneoff: prevOne }]);
+      if (prevDelta || attempted) {
+        state.day_people[date] = prevDelta || attempted;
+        save();
+        remote(function (w, hid) { return w.setDayPeople(hid, date, state.day_people[date]); });
+      }
+      route();
+    });
+    closeOverlay();
+    route();
+  }
+  function dayLabel(date) {
+    try {
+      var i = weekDates(ui.weekOffset).indexOf(date);
+      if (i >= 0) return ['Mandag','Tirsdag','Onsdag','Torsdag','Fredag','Lørdag','Søndag'][i];
+    } catch (e) {}
+    return 'Dagen';
+  }
+  function showHsCard() {
+    // Etter velkomst; én gang; ikke samtidig med velkomst/del
+    if (showWelcome()) return false;
+    if (hsAsked()) return false;
+    if (ui.shareDismissed) { /* ok */ }
+    return true;
+  }
+  function peopleCountersHtml(idPrefix, people, opts) {
+    opts = opts || {};
+    var p = people || { voksen: 2, barn: 2, smabarn: 0 };
+    var rows = [
+      ['voksen', 'Voksne og ungdom', '13 år og eldre'],
+      ['barn', 'Barn 6–12 år', 'Teller som ¾'],
+      ['smabarn', 'Småbarn 1–5 år', 'Teller som ½']
+    ];
+    var h = '<ul class="hs-people" data-testid="' + (opts.testid || 'hs-folk') + '">';
+    rows.forEach(function (row) {
+      var k = row[0], n = p[k] | 0;
+      var usual = opts.usual && (opts.usual[k] | 0);
+      var dl = '';
+      if (opts.usual) {
+        var d = n - usual;
+        if (d) dl = '<span class="dl ' + (d > 0 ? 'up' : 'down') + '">Vanlig: ' + usual + ' · <b>' + (d > 0 ? '+' : '−') + Math.abs(d) + '</b></span>';
+        else dl = '<span class="m">Vanlig: ' + usual + '</span>';
+      }
+      h += '<li data-k="' + k + '"><div class="who"><b>' + row[1] + '</b><span>' + row[2] + (dl ? ' · ' + dl : '') + '</span></div>' +
+        '<div class="hs-step">' +
+        '<button type="button" class="qbtn" data-hs-step="-1" data-hs-k="' + k + '" data-hs-prefix="' + idPrefix + '" aria-label="Færre ' + row[1] + '"' + (n <= 0 || (opts.noFewer && n <= (opts.usual ? opts.usual[k] : 0) && !hsPeople() && opts.dayMode) ? ' disabled' : '') + '>−</button>' +
+        '<span class="val' + (n ? '' : ' zero') + '" id="' + idPrefix + '-' + k + '" aria-live="polite">' + n + '</span>' +
+        '<button type="button" class="qbtn" data-hs-step="1" data-hs-k="' + k + '" data-hs-prefix="' + idPrefix + '" aria-label="Flere ' + row[1] + '"' + (n >= 12 ? ' disabled' : '') + '>+</button>' +
+        '</div></li>';
+    });
+    h += '</ul>';
+    var por = SC.porsjoner(p);
+    h += '<p class="hs-sum" data-testid="' + idPrefix + '-sum">Regnes som <b>' + fmtPor(por) + ' porsjoner</b>' +
+      (opts.factorHtml || '') + '</p>';
+    return h;
+  }
+  function fmtPor(p) {
+    var n = Math.floor(p), r = Math.round((p - n) * 4);
+    if (r === 4) { n++; r = 0; }
+    var s = { 0: '', 1: '¼', 2: '½', 3: '¾' }[r];
+    return (n || !s ? String(n) : '') + (s || '') || '0';
+  }
+  function readCounters(prefix) {
+    return {
+      voksen: parseInt((document.getElementById(prefix + '-voksen') || {}).textContent, 10) || 0,
+      barn: parseInt((document.getElementById(prefix + '-barn') || {}).textContent, 10) || 0,
+      smabarn: parseInt((document.getElementById(prefix + '-smabarn') || {}).textContent, 10) || 0
+    };
+  }
+  function chipHtml(date, recipe) {
+    var delta = dayDelta(date);
+    if (!delta || !recipe) return '';
+    var people = hsPeople();
+    var eff = SC.effectivePeople(people || { voksen: 0, barn: 0, smabarn: 0 }, delta);
+    var net = SC.netPeople(delta);
+    var onlyUp = net > 0 && (delta.voksen || 0) >= 0 && (delta.barn || 0) >= 0 && (delta.smabarn || 0) >= 0;
+    var onlyDown = net < 0 && (delta.voksen || 0) <= 0 && (delta.barn || 0) <= 0 && (delta.smabarn || 0) <= 0;
+    var cls = onlyUp ? '' : onlyDown ? ' minus' : ' endret';
+    var label, aria;
+    if (onlyUp) {
+      label = '+' + net + ' til middag · ' + SC.deltaText(delta);
+      aria = dayLabel(date) + ': ' + net + ' flere til middag. Endre';
+    } else if (onlyDown) {
+      label = '−' + Math.abs(net) + ' til middag · ' + SC.deltaText(delta).replace(/^[−+]/, '').replace(/, [−+]/g, ', ');
+      aria = dayLabel(date) + ': ' + Math.abs(net) + ' færre til middag. Endre';
+    } else {
+      label = 'Endret: ' + SC.peopleText(eff, true) + ' · ' + SC.deltaText(delta);
+      aria = dayLabel(date) + ': endret. Endre';
+    }
+    return '<button type="button" class="hs-chip' + cls + '" data-action="hs-day" data-date="' + date + '" data-testid="hs-brikke" aria-label="' + esc(aria) + '">' +
+      '<span class="who">' + esc(label) + '</span></button>';
+  }
+
   // Samlet middagsmengde for en basisvare (til visning i vinduet), f.eks. «1 ss + 2 ts» eller «1 dl».
   function basisAmount(nn, entries) {
     var byBase = {}, order = [];
@@ -2300,6 +2697,24 @@
     var stats = '<span data-testid="middager">' + built.dinners + ' middag' + (built.dinners === 1 ? '' : 'er') + '</span> · ' +
       '<span class="left" data-testid="igjen">' + left + ' igjen</span>';
     var h = weekNav(built.dates, stats);
+    // v0.8: mengdelinje når husstand er satt (eller det finnes avvik)
+    if (hsPeople() || Object.keys(state.day_people || {}).some(function (d) { return built.dates.indexOf(d) >= 0 && dayDelta(d); })) {
+      var p = hsPeople();
+      var devs = [];
+      built.dates.forEach(function (d, i) {
+        var dd = dayDelta(d); if (!dd) return;
+        var net = SC.netPeople(dd);
+        var short = ['man','tir','ons','tor','fre','lør','søn'][i];
+        var onlyUp = net > 0 && (dd.voksen||0)>=0 && (dd.barn||0)>=0 && (dd.smabarn||0)>=0;
+        var onlyDn = net < 0 && (dd.voksen||0)<=0 && (dd.barn||0)<=0 && (dd.smabarn||0)<=0;
+        devs.push(short + ' ' + (onlyUp ? '+' + net : onlyDn ? '−' + Math.abs(net) : 'endret'));
+      });
+      var two = devs.length > 0;
+      h += '<button type="button" class="hs-line' + (two ? ' two' : '') + '" data-action="hs-slik" data-testid="hs-mengder">' +
+        '<span class="t"><b>Mengder for ' + (p ? SC.peopleText(p, true) : '4 (husstand ikke satt)') + '</b>' +
+        (two ? '<span class="dev">Avvik: ' + esc(devs.join(' · ')) + '</span>' : '') + '</span>' +
+        '<span class="go">Se ›</span></button>';
+    }
     h += '<div class="sort-h" id="sort-h">Sortering</div>';
     h += '<div class="list-tools"><div class="seg sort" role="group" aria-labelledby="sort-h" data-testid="sortering">' + SORTS.map(function (x) {
       var on = ui.sort === x[0];
@@ -2477,6 +2892,54 @@
     }
   });
 
+  document.addEventListener('click', function (e) {
+    var step = e.target.closest('[data-hs-step]');
+    if (step && !main.contains(step)) {
+      // samme logikk som i main – for ark på body
+      e.preventDefault();
+      var k = step.getAttribute('data-hs-k');
+      var prefix = step.getAttribute('data-hs-prefix');
+      var el = document.getElementById(prefix + '-' + k);
+      if (!el) return;
+      var n = parseInt(el.textContent, 10) || 0;
+      n = Math.max(0, Math.min(12, n + parseInt(step.getAttribute('data-hs-step'), 10)));
+      el.textContent = n; el.classList.toggle('zero', !n);
+      if (prefix === 'hsd' && ui.hsDayDate) updateDaySheetResult(ui.hsDayDate);
+      return;
+    }
+    var b2 = e.target.closest('[data-action]');
+    if (b2 && !main.contains(b2) && /^(hs-ark-lukk|hs-dag-lagre|hs-dag-tom|hs-dag-reset)$/.test(b2.getAttribute('data-action') || '')) {
+      // la main-handleren ikke treffe – kall samme via syntetisk
+      e.preventDefault();
+      var a2 = b2.getAttribute('data-action');
+      if (a2 === 'hs-ark-lukk') closeOverlay();
+      else if (a2 === 'hs-dag-lagre' || a2 === 'hs-dag-tom' || a2 === 'hs-dag-reset') {
+        // trigger by dispatching on a temp path: reuse by setting btn context via click simulation on cloned logic
+        var fake = b2;
+        // inline minimal
+        if (a2 === 'hs-ark-lukk') closeOverlay();
+        else if (a2 === 'hs-dag-reset') {
+          var dateR = fake.getAttribute('data-date');
+          saveDayPeople(dateR, { voksen: 0, barn: 0, smabarn: 0 }, { toastMsg: dayLabel(dateR) + ' er tilbake til husstanden' });
+        } else if (a2 === 'hs-dag-tom') {
+          var dateT = fake.getAttribute('data-date');
+          var curT = readCounters('hsd');
+          var usualT = hsPeople();
+          var deltaT = usualT ? { voksen: curT.voksen - (usualT.voksen||0), barn: curT.barn - (usualT.barn||0), smabarn: curT.smabarn - (usualT.smabarn||0) } : curT;
+          clearDayToEmpty(dateT, dayDelta(dateT), deltaT);
+        } else {
+          var date = fake.getAttribute('data-date');
+          var cur3 = readCounters('hsd');
+          var usual = hsPeople();
+          var delta = usual ? { voksen: cur3.voksen - (usual.voksen||0), barn: cur3.barn - (usual.barn||0), smabarn: cur3.smabarn - (usual.smabarn||0) } : cur3;
+          var net = SC.netPeople(delta);
+          var msg = dayLabel(date) + (net > 0 ? ': +' + net + ' til middag. Lista er oppdatert.' : net < 0 ? ': −' + Math.abs(net) + ' til middag. Lista er oppdatert.' : ' er endret. Lista er oppdatert.');
+          saveDayPeople(date, delta, { toastMsg: msg });
+        }
+      }
+      return;
+    }
+  });
   main.addEventListener('click', function (e) {
     var lab = e.target.closest && e.target.closest('.item label');
     if (!lab) return;
@@ -2691,6 +3154,33 @@
   /* ---------- Hendelser ---------- */
 
   main.addEventListener('click', function (e) {
+    var step = e.target.closest('[data-hs-step]');
+    if (step) {
+      e.preventDefault();
+      var k = step.getAttribute('data-hs-k');
+      var prefix = step.getAttribute('data-hs-prefix');
+      var el = document.getElementById(prefix + '-' + k);
+      if (!el) return;
+      var n = parseInt(el.textContent, 10) || 0;
+      n = Math.max(0, Math.min(12, n + parseInt(step.getAttribute('data-hs-step'), 10)));
+      el.textContent = n;
+      el.classList.toggle('zero', !n);
+      // refresh +/− disabled
+      var row = step.closest('li');
+      if (row) {
+        var minus = row.querySelector('[data-hs-step="-1"]');
+        var plus = row.querySelector('[data-hs-step="1"]');
+        if (minus) minus.disabled = n <= 0;
+        if (plus) plus.disabled = n >= 12;
+      }
+      var sum = document.querySelector('[data-testid="' + prefix + '-sum"]');
+      if (sum) {
+        var p = readCounters(prefix);
+        sum.innerHTML = 'Regnes som <b>' + fmtPor(SC.porsjoner(p)) + ' porsjoner</b>';
+      }
+      if (prefix === 'hsd' && ui.hsDayDate) updateDaySheetResult(ui.hsDayDate);
+      return;
+    }
     var btn = e.target.closest('[data-action]');
     if (!btn) return;
     var a = btn.getAttribute('data-action');
@@ -2732,10 +3222,20 @@
       var wk = weekDates(ui.weekOffset);
       var wn = isoWeek(parseIso(wk[0]));
       if (!window.confirm(hh
-        ? 'Tømme alle kvelder i uke ' + wn + ', også engangsmiddager? Dette gjelder hele husstanden. Varer lagt til selv og faste varer blir stående.'
-        : 'Tømme alle kvelder i uke ' + wn + ', også engangsmiddager? Varer lagt til selv og faste varer blir stående.')) return;
+        ? 'Tømme alle kvelder i uke ' + wn + ', også engangsmiddager og hvem som spiser? Dette gjelder hele husstanden. Varer lagt til selv og faste varer blir stående.'
+        : 'Tømme alle kvelder i uke ' + wn + ', også engangsmiddager og hvem som spiser? Varer lagt til selv og faste varer blir stående.')) return;
+      var prevPeople = {};
+      wk.forEach(function (d) { if (state.day_people[d]) prevPeople[d] = state.day_people[d]; delete state.day_people[d]; });
+      save();
+      wk.forEach(function (d) { remote(function (w, hid) { return w.deleteDayPeople(hid, d); }); });
       ops.setDays(wk.map(function (d) { return { date: d, recipe_id: null, oneoff: null }; }));
-      toast('Uke ' + wn + ' er tømt');
+      toast('Uke ' + wn + ' er tømt', 8000, function () {
+        Object.keys(prevPeople).forEach(function (d) {
+          state.day_people[d] = prevPeople[d];
+          remote(function (w, hid) { return w.setDayPeople(hid, d, prevPeople[d]); });
+        });
+        save(); route();
+      });
       renderUke();
     } else if (a === 'copy-text') {
       copyList();
@@ -2745,6 +3245,56 @@
       lsSet(WELCOME_KEY, '1');
       renderUke();
       focusEl('[data-testid="fyll"]', '.week-nav [data-action="week-next"]');
+    } else if (a === 'hs-bruk') {
+      var p = readCounters('hs0');
+      saveHouseholdSize({ people: p, scale: true, asked: true });
+    } else if (a === 'hs-hopp') {
+      saveHouseholdSize({ people: null, scale: true, asked: true }, { toast: false });
+    } else if (a === 'hs-lagre-innstillinger') {
+      var p2 = readCounters('hsh');
+      // v0.8: lagre preferanse (scale-flagget), ikke hsScaleOn() som krever people allerede satt
+      var on = hsState().scale !== false;
+      var bryter = document.querySelector('[data-testid="hs-tilpass-bryter"]');
+      if (bryter) on = bryter.getAttribute('aria-checked') === 'true';
+      saveHouseholdSize({ people: p2, scale: on, asked: true });
+    } else if (a === 'hs-scale-toggle') {
+      var cur = hsState();
+      var next = !(cur.scale !== false);
+      btn.setAttribute('aria-checked', next ? 'true' : 'false');
+      var sw = btn.querySelector('.sw'); if (sw) sw.classList.toggle('on', next);
+      state.household_size = { people: cur.people, scale: next, asked: true };
+      save();
+      remote(function (w, hid) { return w.setHouseholdSettings(hid, state.household_size); });
+      toast(next ? 'Retter fra Knaggen tilpasses husstanden' : 'Retter fra Knaggen bruker oppskriftens mengder', 8000);
+      route();
+    } else if (a === 'hs-day') {
+      openDayPeopleSheet(btn.getAttribute('data-date'));
+    } else if (a === 'hs-ark-lukk') {
+      closeOverlay();
+    } else if (a === 'hs-dag-lagre') {
+      var date = btn.getAttribute('data-date');
+      var cur3 = readCounters('hsd');
+      var usual = hsPeople();
+      var delta = usual
+        ? { voksen: cur3.voksen - (usual.voksen||0), barn: cur3.barn - (usual.barn||0), smabarn: cur3.smabarn - (usual.smabarn||0) }
+        : cur3;
+      var net = SC.netPeople(delta);
+      var msg = dayLabel(date) + (net > 0 ? ': +' + net + ' til middag. Lista er oppdatert.' : net < 0 ? ': −' + Math.abs(net) + ' til middag. Lista er oppdatert.' : ' er endret. Lista er oppdatert.');
+      saveDayPeople(date, delta, { toastMsg: msg });
+    } else if (a === 'hs-dag-tom') {
+      var dateT = btn.getAttribute('data-date');
+      var curT = readCounters('hsd');
+      var usualT = hsPeople();
+      var deltaT = usualT
+        ? { voksen: curT.voksen - (usualT.voksen||0), barn: curT.barn - (usualT.barn||0), smabarn: curT.smabarn - (usualT.smabarn||0) }
+        : curT;
+      clearDayToEmpty(dateT, dayDelta(dateT), deltaT);
+    } else if (a === 'hs-dag-reset') {
+      var dateR = btn.getAttribute('data-date');
+      saveDayPeople(dateR, { voksen: 0, barn: 0, smabarn: 0 }, { toastMsg: dayLabel(dateR) + ' er tilbake til husstanden' });
+    } else if (a === 'hs-slik') {
+      // enkel: åpne husstand-siden
+      location.hash = '#husstand';
     } else if (a === 'add-toggle') {
       ui.addOpen = !ui.addOpen;
       renderListSection();

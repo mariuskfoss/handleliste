@@ -78,11 +78,37 @@ function withTimeout(p, ms, msg) {
 const hh = (hid, ...rest) => [ctx.db, 'households', hid, ...rest];
 
 function recipeDoc(r) {
-  return {
+  const o = {
     name: r.name, minutes: r.minutes == null ? null : r.minutes, note: r.note || '',
     // v0.4.3: basis (true/false) bare når ingrediensen er merket annerledes enn standardtabellen.
     ingredients: (r.ingredients || []).map(i => Object.assign({ name: i.name, qty: i.qty == null ? null : i.qty, unit: i.unit || '', aisle: i.aisle },
       typeof i.basis === 'boolean' ? { basis: i.basis } : {})),
+    updated_at: Date.now()
+  };
+  // v0.8: valgfrie felt – bare når satt, så eldre regler/klienter ikke brytes unødig ved lesing
+  if (r.origin) o.origin = String(r.origin).slice(0, 40);
+  if (r.servings != null && isFinite(r.servings)) o.servings = Number(r.servings);
+  if (r.scale === false) o.scale = false;
+  return o;
+}
+function householdSettingsDoc(h) {
+  return {
+    people: h && h.people ? {
+      voksen: h.people.voksen | 0, barn: h.people.barn | 0, smabarn: h.people.smabarn | 0
+    } : null,
+    scale: !!(h && h.scale),
+    asked: !!(h && h.asked),
+    updated_at: Date.now()
+  };
+}
+function dayPeopleDoc(date, delta) {
+  return {
+    date,
+    delta: {
+      voksen: (delta && delta.voksen) | 0,
+      barn: (delta && delta.barn) | 0,
+      smabarn: (delta && delta.smabarn) | 0
+    },
     updated_at: Date.now()
   };
 }
@@ -143,6 +169,13 @@ async function createHousehold(local, existing) {
     writes.push(['set', hh(hid, 'lists', w), { week: w, checked: weeks[w].checked || {}, adjust: weeks[w].adjust || {} }]);
   });
   (local.list_extras || []).forEach(x => writes.push(['set', hh(hid, 'extras', x.id), extraDoc(x)]));
+  if (local.household_size && local.household_size.asked)
+    writes.push(['set', hh(hid, 'settings', 'household'), householdSettingsDoc(local.household_size)]);
+  Object.keys(local.day_people || {}).forEach(d => {
+    const delta = local.day_people[d];
+    if (delta && (delta.voksen || delta.barn || delta.smabarn))
+      writes.push(['set', hh(hid, 'daypeople', d), dayPeopleDoc(d, delta)]);
+  });
   for (let i = 0; i < writes.length; i += 400) {
     const b = fs.writeBatch(c.db);
     writes.slice(i, i + 400).forEach(w => b.set(fs.doc(...w[1]), w[2]));
@@ -197,6 +230,8 @@ function subscribe(hid, oldest, handlers) {
   listen('days', fs.query(fs.collection(...hh(hid, 'days')), fs.where('date', '>=', oldest)));
   listen('lists', fs.query(fs.collection(...hh(hid, 'lists')), fs.where('week', '>=', oldest)));
   listen('extras', fs.query(fs.collection(...hh(hid, 'extras')), fs.where('week', '>=', oldest)));
+  listen('settings', fs.collection(...hh(hid, 'settings')));
+  listen('daypeople', fs.query(fs.collection(...hh(hid, 'daypeople')), fs.where('date', '>=', oldest)));
   return () => unsubs.forEach(u => u());
 }
 
@@ -241,6 +276,9 @@ const W = {
   setStaple: (hid, s) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'staples', s.id)), stapleDoc(s)),
   updateStaple: (hid, id, fields) => ctx.fs.updateDoc(ctx.fs.doc(...hh(hid, 'staples', id)), fields),
   deleteStaple: (hid, id) => ctx.fs.deleteDoc(ctx.fs.doc(...hh(hid, 'staples', id))),
+  setHouseholdSettings: (hid, h) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'settings', 'household')), householdSettingsDoc(h)),
+  setDayPeople: (hid, date, delta) => ctx.fs.setDoc(ctx.fs.doc(...hh(hid, 'daypeople', date)), dayPeopleDoc(date, delta)),
+  deleteDayPeople: (hid, date) => ctx.fs.deleteDoc(ctx.fs.doc(...hh(hid, 'daypeople', date))),
   // v0.4.4: venter til telefonens egne ventende skrivinger er bekreftet (før en bytte-transaksjon).
   settled: () => ctx.fs.waitForPendingWrites(ctx.db)
 };
