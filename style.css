@@ -819,3 +819,172 @@ select option:disabled { color: var(--line-strong); }
 .hs-prev .o { color: var(--muted); text-decoration: line-through; text-align: right; }
 .hs-prev .n { font-weight: 700; text-align: right; }
 .hs-more { min-height: 44px; padding: 0; border: 0; background: none; color: var(--brand); font: inherit; font-size: 14px; font-weight: 700; text-align: left; cursor: pointer; }
+
+/* ===== v0.9 – Første møte og eget hjem (portert fra merkevare/forste-mote/_bygg/html/forste.css; uten mockup-regler) =====
+ * Bare variabler fra paletten i merkevare.md (+ --on-accent som v0.8 allerede har). Ingen nye farger. */
+
+/* Skjult tekst for skjermleser */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- Kom i gang-kortet (slår sammen velkomst v0.6.2, husstandskort v0.8 og delingskort v0.4.6) ---------- */
+.km { position: relative; margin: 0 0 12px; padding: 12px 12px 12px 14px; background: var(--brand-soft); border: 1px solid var(--brand-soft-line); border-radius: var(--radius); }
+.km-t { margin: 0 40px 0 0; font-size: 16px; font-weight: 700; line-height: 1.3; color: var(--ink); }
+.km-tag { margin: 3px 0 0; font-size: 13px; color: var(--muted); }
+.km-x { position: absolute; top: 2px; right: 2px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--muted); font: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
+.km-steps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 2px; }
+.km-steps > li { display: grid; grid-template-columns: 28px 1fr; column-gap: 10px; align-items: start; padding: 4px 0; }
+.km-steps .n { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700; box-sizing: border-box;
+  border: 1.5px solid var(--muted); color: var(--muted); background: transparent; margin-top: -1px; }
+.km-steps .on .n, .km-steps .done .n { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.km-steps .n svg { width: 15px; height: 15px; }
+.km-steps .h { font-size: 15px; line-height: 24px; color: var(--muted); }
+.km-steps .on .h { color: var(--ink); font-weight: 700; }
+.km-steps .done .h { color: var(--ink); }
+.km-steps .done .h .s { color: var(--muted); }
+.km-steps .done .h a { display: inline-flex; align-items: center; min-height: 44px; margin: -10px 0; padding: 0 2px; vertical-align: middle; color: var(--brand); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.km-body { grid-column: 1 / -1; display: grid; gap: 8px; margin-top: 6px; }
+.km-body p { margin: 0; font-size: 14px; color: var(--ink); }
+.km-body p.m { color: var(--muted); }
+.km-body .hs-people > li { min-height: 52px; padding: 4px 6px 4px 10px; }
+.km-body .hs-sum { margin: 0 2px; }
+.km-acts { display: flex; gap: 8px; align-items: center; }
+.km-acts .btn { min-height: 46px; }
+.km-acts .btn.primary { flex: 1; }
+.km-acts .btn.ghost { background: transparent; border-color: transparent; color: var(--ink); text-decoration: underline; padding: 0 8px; }
+
+/* ---------- Invitasjon (avsender) ---------- */
+.inv-msg { margin: 0; padding: 10px 12px; background: var(--card-2); border-radius: 12px; font-size: 14px; line-height: 1.4; color: var(--ink); white-space: pre-line; }
+.inv-msg .l { color: var(--brand); text-decoration: underline; word-break: break-all; }
+.inv-lab { margin: 2px 0 0; font-size: 13px; font-weight: 600; color: var(--muted); }
+.code { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 8px 8px 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--card); }
+.code b { font: 700 26px/1.1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 2px; color: var(--ink); }
+.code .sub { font-size: 13px; }
+.inv-acts { display: grid; gap: 8px; }
+.inv-acts .btn { min-height: 48px; }
+.inv-acts .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.inv-note { margin: 0; font-size: 13px; color: var(--muted); }
+.ico-in { width: 20px; height: 20px; margin-right: 8px; flex: none; }
+
+/* ---------- Bli med (mottaker) ---------- */
+.join h2 { font-size: 24px; margin: 4px 0 6px; }
+.join .lead { margin: 0 0 12px; font-size: 16px; color: var(--ink); }
+.join-what { list-style: none; margin: 0 0 14px; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+.join-what li { display: flex; gap: 12px; align-items: center; padding: 10px 12px; }
+.join-what li + li { border-top: 1px solid var(--line); }
+.join-what svg { width: 24px; height: 24px; flex: none; color: var(--brand); }
+.join-what svg .ball { fill: var(--accent); }
+.join-what b { display: block; font-size: 15px; }
+.join-what span { font-size: 14px; color: var(--muted); }
+.join .acts { display: grid; gap: 8px; margin: 0 0 10px; }
+.join .acts .btn { min-height: 48px; }
+.join .hint { margin: 0; }
+.inapp-box { margin: 0 0 14px; padding: 10px 12px 12px; background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; display: grid; gap: 8px; }
+.inapp-box p { margin: 0; font-size: 14px; }
+.inapp-box b { font-size: 15px; }
+.inapp-box .btn { min-height: 46px; }
+
+/* ---------- «Legg på hjemskjermen» ---------- */
+.inst { position: relative; margin: 0 0 12px; padding: 12px 12px 12px 12px; background: var(--card); border: 1px solid var(--brand); border-radius: var(--radius); display: grid; grid-template-columns: 48px 1fr; column-gap: 12px; row-gap: 10px; }
+.inst img { width: 48px; height: 48px; border-radius: 11px; box-shadow: 0 0 0 1px var(--line); }
+.inst h3 { margin: 0; font-size: 16px; line-height: 1.3; }
+.inst p { margin: 2px 0 0; font-size: 14px; color: var(--muted); }
+.inst .km-acts { grid-column: 1 / -1; }
+.steps-ios { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); counter-reset: s; }
+.steps-ios li { display: grid; grid-template-columns: 26px 1fr 40px; gap: 10px; align-items: center; padding: 10px 12px; }
+.steps-ios li + li { border-top: 1px solid var(--line); }
+.steps-ios .n { width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); display: grid; place-items: center; font-size: 14px; font-weight: 700; }
+.steps-ios p { margin: 0; font-size: 15px; line-height: 1.35; }
+.steps-ios p .m { display: block; font-size: 13px; color: var(--muted); }
+.steps-ios .g { width: 40px; height: 40px; border-radius: 10px; background: var(--card-2); display: grid; place-items: center; color: var(--ink); }
+.steps-ios .g svg { width: 24px; height: 24px; }
+.steps-ios .g.tg { background: transparent; }
+.steps-ios .g.tg span { width: 30px; height: 18px; border-radius: 999px; background: var(--brand); position: relative; }
+.steps-ios .g.tg span::after { content: ""; position: absolute; right: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--brand-ink); }
+.copied { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px 12px; background: var(--brand-soft); border: 1px solid var(--brand-soft-line); border-radius: 10px; font-size: 14px; color: var(--ink); }
+.copied svg { width: 20px; height: 20px; flex: none; color: var(--brand); margin-top: 1px; }
+
+/* ---------- Koble til (iPhone, første åpning fra Hjem-skjerm) ---------- */
+.connect h2 { font-size: 22px; margin: 6px 0 6px; }
+.connect .lead { margin: 0 0 14px; font-size: 15px; }
+.connect .btn { min-height: 48px; }
+.connect .or { display: flex; align-items: center; gap: 10px; margin: 16px 0 10px; color: var(--muted); font-size: 13px; }
+.connect .or::before, .connect .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.code-in { display: flex; gap: 8px; }
+.code-in input { flex: 1; min-width: 0; height: 48px; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card); color: var(--ink);
+  font: 700 20px ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: 2px; text-transform: uppercase; }
+.code-in input::placeholder { color: var(--muted); font-weight: 400; letter-spacing: 1px; }
+.connect .new { display: block; margin: 18px 0 0; min-height: 44px; }
+
+/* ---------- Gammel adresse (egen, liten side) ---------- */
+.moved { padding-top: 8px; }
+.moved h2 { font-size: 24px; margin: 6px 0 8px; }
+.moved .addr { display: inline-block; margin: 0 0 12px; padding: 4px 10px; border-radius: 8px; background: var(--brand-soft); color: var(--brand); font-weight: 700; font-size: 16px; }
+.moved p { margin: 0 0 12px; font-size: 15px; }
+.moved .btn { width: 100%; min-height: 48px; margin: 4px 0 14px; }
+.moved ul { margin: 0 0 12px; padding-left: 20px; font-size: 15px; }
+
+/* ---------- Husstand: Deling og Denne telefonen ---------- */
+.hs-group { list-style: none; margin: 0 0 12px; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); }
+.hs-group > li { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 12px; }
+.hs-group > li + li { border-top: 1px solid var(--line); }
+.hs-group .t { flex: 1; min-width: 0; }
+.hs-group .t b { display: block; font-size: 15px; font-weight: 600; }
+.hs-group .t span { font-size: 13px; color: var(--muted); }
+.hs-group .go { color: var(--muted); font-size: 20px; }
+.hs-group a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; }
+.phones { display: flex; gap: 4px; color: var(--brand); }
+.phones svg { width: 22px; height: 22px; }
+.code.small b { font-size: 20px; }
+
+/* v0.9-hjelpere (App) */
+body.v9-notabs .tabs { display: none; }
+body.v9-notabs { --nav-h: 0px; }
+.hs-group .hs-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; text-decoration: none; }
+.hs-group .hs-code { display: grid; gap: 8px; align-items: stretch; padding: 10px 12px; }
+.hs-group .mini { width: 32px; height: 32px; border-radius: 8px; box-shadow: 0 0 0 1px var(--line); flex: none; }
+.hs-group .ic { width: 32px; height: 32px; display: grid; place-items: center; color: var(--brand); flex: none; }
+.hs-group .ic svg { width: 22px; height: 22px; margin: 0; }
+.btn.wide { width: 100%; }
+.btn .ico-in, .btn svg.ico-in { vertical-align: -4px; }
+.inv-acts .btn, .km-acts .btn, .connect .btn { display: inline-flex; align-items: center; justify-content: center; }
+.inv-wait { margin: 0; padding: 10px 0; color: var(--muted); font-size: 15px; }
+.inv-ok { margin-top: 2px; }
+.v9-sheet { max-height: calc(100dvh - 24px); overflow-y: auto; box-sizing: border-box; }
+.v9-sheet .sub { font-size: 13px; color: var(--muted); }
+.v9-sheet .m { margin: 0; font-size: 14px; color: var(--muted); }
+.hs-long { margin: 0 0 12px; }
+.hs-long summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--brand); font-weight: 600; font-size: 15px; }
+.hs-long .field { margin: 4px 0 8px; }
+.join .hint + .hint, .moved .hint { margin-top: 8px; }
+/* v0.9 (Trude): kortet for ny fast vare – mengde −/+ og brikker med ett trykk */
+.fv-new-ed { display: grid; gap: 8px; }
+.fv-new-qty { display: flex; align-items: center; gap: 6px; }
+.fv-new-qty .step { width: 44px; height: 44px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card); color: var(--ink); font: inherit; font-size: 20px; font-weight: 700; cursor: pointer; }
+.fv-new-qty .step:disabled { opacity: .45; cursor: default; }
+.fv-new-qty input { width: 64px; height: 44px; box-sizing: border-box; text-align: center; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--card); color: var(--ink); font: inherit; font-size: 17px; }
+.fv-new-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fv-new-chips .chip { min-height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--card); color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; position: relative; }
+.fv-new-chips .chip::after { content: ""; position: absolute; inset: -2px 0; }
+.fv-new-chips .chip.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+/* v0.9: uten fanelinje (Bli med, Koble til, flyttesiden) ligger toastbåndet helt nederst */
+body.v9-notabs .toast-dock { bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-lift, 0px)); }
+
+/* v0.9 endring: introsiden for nye besøkende – én skjerm, bare eksisterende merkeelementer (lockup, palett, tellere, knapper). */
+body.v9-intro .topbar { display: none; }   /* lockupen står stort på siden; én synlig h1 */
+.intro { display: flex; flex-direction: column; gap: 12px; padding-top: max(8px, env(safe-area-inset-top, 0px)); }
+.intro-top { display: flex; justify-content: flex-end; margin: 0 -4px -8px 0; }
+.intro-skip { min-height: 44px; min-width: 44px; padding: 8px 12px; font-size: 15px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.intro-lockup { margin: 0; line-height: 0; }
+.intro-lockup img { width: 176px; height: auto; }
+.intro-tag { margin: -4px 0 0; color: var(--accent-ink); font-weight: 600; font-size: 16px; }
+.intro-lines { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 6px; }
+.intro-lines li { display: flex; align-items: center; gap: 10px; font-size: 16px; line-height: 1.35; }
+.intro-lines .n { flex: none; width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--brand-soft); border: 1px solid var(--brand-soft-line); color: var(--ink); font-size: 13px; font-weight: 700; }
+.intro-hs { display: grid; gap: 6px; margin-top: 4px; }
+.intro-q { margin: 0; font-size: 17px; font-weight: 700; }
+.intro-hs .m { margin: 0; color: var(--muted); font-size: 14px; }
+.intro-hs .hs-sum { margin: 2px 0 0; }
+.intro-acts { display: grid; gap: 8px; margin-top: 4px; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); }
+.intro-acts .btn { min-height: 48px; justify-content: center; text-align: center; }
+.km-compact .km-t { padding-right: 44px; }

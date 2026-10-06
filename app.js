@@ -1,4 +1,4 @@
-/* Knaggen (arbeidsnavn Ukeshandel) v0.8.0 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
+/* Knaggen (arbeidsnavn Ukeshandel) v0.9.0 — ukeplan for middager + handleliste, delt i husstanden via Firebase.
  * Uten Firebase-oppsett (eller før husstand er opprettet) lagres alt lokalt i nettleseren som før.
  */
 (function () {
@@ -168,6 +168,7 @@
   function toastEl() { return document.getElementById('toast'); }
   function dockEl() { return document.getElementById('toast-dock'); }
   function toast(msg, ms, action) {
+    if (typeof action === 'function') action = { label: 'Angre', run: action };   // v0.9: v0.8-kall sendte funksjonen direkte
     var t = toastEl(), dock = dockEl();
     t.textContent = '';
     var m = document.createElement('span');
@@ -374,7 +375,10 @@
       try { s = JSON.parse(raw); } catch (e) { s = null; }
       if (s && typeof s === 'object' && Array.isArray(s.recipes)) {
         hadLocalData = true;
+        var fromSchema = s.schema;
         state = migrate(s, raw);
+        // v0.9: lagre igjen når skjemaet faktisk ble migrert (v0.8 sluttet å lagre her, så migreringen ble først skrevet ved neste endring)
+        if (fromSchema !== SCHEMA) save();
         // v0.8: merk Knaggen-retter i minnet; ikke skriv localStorage på nytt bare for origin/servings
         // (oppgraderingstester og «egne data»-sjekk skal ikke se en omskrivning ved første last)
         tagKnaggenRecipes();
@@ -730,6 +734,20 @@
         state.day_people = m;
         remoteChanged();
       },
+      // v0.9: antall tilkoblinger og aktiv kode (feil her – f.eks. eldre regler – ignoreres)
+      members: function (docs) {
+        if (!docs) return;
+        ui.members = docs.length;
+        membersChanged();
+      },
+      invite: function (docs) {
+        if (!docs) return;
+        var d = docs.filter(function (x) { return x.id === 'current'; })[0];
+        var inv = d && d.code ? { code: d.code, expires_at: d.expires_at && d.expires_at.toMillis ? d.expires_at.toMillis() : 0 } : null;
+        var before = JSON.stringify(ui.invite);
+        setInvite(inv, false);
+        if (JSON.stringify(inv) !== before) refreshDeling();
+      },
       status: function (st) {
         syncStatus.pending = st.pending; syncStatus.fromCache = st.fromCache; syncStatus.failed = false;
         if (!st.fromCache) syncStatus.connecting = false;
@@ -792,7 +810,7 @@
   }
   function isFormRoute() {
     var h = location.hash || '';
-    return /^#retter\/.+/.test(h) || /^#liste\/faste/.test(h) || /^#uke\/engang\//.test(h) || /^#(husstand|join=)/.test(h);
+    return /^#retter\/.+/.test(h) || /^#liste\/faste/.test(h) || /^#uke\/engang\//.test(h) || /^#(husstand|join=|inn=|flytt=|koble)/.test(h) || !!NEW_HOME;
   }
   function isTyping() {
     if (swipe) return true;                       // ikke tegn på nytt midt i et sveip
@@ -812,6 +830,7 @@
     return Sync.createHousehold({
       recipes: local.recipes, staples: local.staples, week_plan: local.week_plan, oneoffs: local.oneoffs,
       checks: remoteChecksByWeek(local.checks), list_adjust: local.list_adjust, list_extras: local.list_extras,
+      household_size: local.household_size, day_people: local.day_people,   // v0.9: husstandens størrelse og avvik per dag blir med
       onCore: function (v) {
         if (!resume) writeHH({ hid: v.hid, secret: v.secret, core_done: false, migrated: false });
       },
@@ -845,6 +864,9 @@
       enterHousehold(readHH() || { hid: v.hid, secret: v.secret, core_done: true, migrated: true }, snapshot);
       location.hash = '#husstand';
       renderHousehold();
+      // v0.9: koden lages med en gang, så Husstand viser den (delingsmenyen åpnes på et nytt, ferskt trykk)
+      ui.inviteBusy = true; refreshDeling();
+      ensureInvite(false).then(function () { ui.inviteBusy = false; refreshDeling(); }, function (e2) { ui.inviteBusy = false; ui.inviteErr = inviteErrText(e2); refreshDeling(); });
     }, function (e) {
       ui.busy = false;
       ui.error = errorText(e);
@@ -866,10 +888,13 @@
       if (unsubscribe) { unsubscribe(); unsubscribe = null; }
       var info = { hid: hid, secret: secret, core_done: true, migrated: false, joined: true };
       writeHH(info);
+      ui.invite = null; ui.members = null;
       enterHousehold(info);
+      ui.installMoment = 'B';   // v0.9: hjemskjerm-kortet etter Bli med
       history.replaceState(null, '', location.pathname + location.search + '#uke');
+      setTabsHidden(false);
       route();
-      toast('Du er med i husstanden');
+      toast('Du er med i husstanden. Uka og lista er felles.', 4000);
     }, function (e) {
       ui.busy = false;
       ui.error = e && e.code === 'permission-denied' ? 'Lenka virker ikke. Be om en ny lenke fra den som delte den.' : errorText(e);
@@ -891,7 +916,7 @@
     var h = '<section class="page" data-page="husstand">';
     var hp = hsPeople() || { voksen: 2, barn: 2, smabarn: 0 };
     var hasP = !!hsPeople();
-    h += '<div class="page-head"><h2>Husstand</h2><a class="btn" href="#uke">Tilbake</a></div>';
+    h += '<div class="page-head"><h2>Husstand</h2><a class="btn" href="#uke" data-testid="husstand-tilbake">Tilbake</a></div>';
     h += '<p class="hs-h">Hvem spiser middag</p>';
     h += peopleCountersHtml('hsh', hasP ? hsPeople() : hp, { testid: 'hs-innstillinger' });
     var scalePref = hsState().scale !== false;
@@ -900,46 +925,38 @@
       '<span class="sw' + (scalePref ? ' on' : '') + '" aria-hidden="true"></span></button>';
     h += '<p class="hs-note">Vektene følger Helsedirektoratets energibehov (omtrent). Under 1 år telles ikke.</p>';
     h += '<div class="form-actions plain"><button type="button" class="btn primary" data-action="hs-lagre-innstillinger" data-testid="hs-lagre">Lagre</button></div>';
+    // v0.9 (merkevare/forste-mote, skjerm 11): «Deling» med antall tilkoblinger, kode, Inviter / Kopier lenke / Lag ny kode,
+    // og «Denne telefonen». Husstanden lages i trykket «Inviter med melding» (ingen egen «Opprett»-side).
+    h += '<h3 class="hs-h" id="deling">Deling</h3>';
     if (hh) {
       if (ui.justCreated) {
         h += '<p class="notice" data-testid="opprettet">Husstanden er opprettet' + (ui.movedOwn ? ', og rettene, uka og lista fra denne telefonen er flyttet inn.' : '.') + '</p>';
       }
-      h += '<p class="hs-h">Deling</p>';
-      h += '<p>Send denne lenka til den du handler med. Når den åpnes på en annen telefon, ser dere de samme rettene, uka og lista.</p>' +
-        '<label class="field"><span>Delingslenke</span><input type="text" id="share-link" readonly value="' + esc(shareLink()) + '"></label>' +
-        '<div class="form-actions plain"><button type="button" class="btn primary" data-action="copy-link" data-testid="kopier-lenke">Kopier lenke</button>' +
-        '<a class="btn" href="#uke">' + (ui.justCreated ? 'Ferdig' : 'Tilbake') + '</a></div>' +
-        '<p class="hint">Alle som har lenka kan se og endre dataene. Del den bare med husstanden.</p>';
+      h += '<div id="hs-deling">' + delingHtml() + '</div>';
+      if (ui.justCreated) h += '<div class="form-actions plain"><a class="btn" href="#uke">Ferdig</a></div>';
     } else if (!syncMode()) {
-      h += '<div class="page-head"><h2>Del med husstanden</h2></div><p class="empty">Deling er ikke satt opp ennå.</p><a class="btn" href="#uke">Tilbake</a>';
+      h += '<p class="empty">Deling er ikke satt opp ennå.</p>';
     } else {
-      h += '<div class="page-head"><h2>Del med husstanden</h2></div>' +
-        '<p>Opprett en husstand for å dele retter, ukeplan og handleliste. Ingen konto trengs – dere deler en lenke.</p>' +
+      h += '<p>Handler dere sammen? Send en invitasjon på melding, så ser dere samme uke og liste. Ingen konto.</p>' +
         '<p class="hint">' + (hasOwnData() ? 'Rettene, ukeplanen og lista på denne telefonen flyttes inn i husstanden.' : 'Husstanden starter med startdataene (retter og faste varer) som er her nå.') + '</p>' +
         (ui.error ? '<p class="form-error" data-testid="feil">' + esc(ui.error) + '</p>' : '') +
-        '<div class="form-actions plain"><button type="button" class="btn primary" data-action="create-household" data-testid="opprett"' + (ui.busy ? ' disabled' : '') + '>' +
-        (ui.busy ? 'Oppretter …' : 'Opprett husstand') + '</button>' +
-        '<a class="btn" href="#uke" data-testid="husstand-tilbake">Tilbake</a></div>' +
-        '<p class="hint">Har noen i husstanden allerede opprettet en? Åpne lenka de sendte deg på denne telefonen i stedet.</p>';
+        '<div class="inv-acts"><button type="button" class="btn primary" data-action="create-household" data-testid="opprett"' + (ui.busy ? ' disabled' : '') + '>' +
+        IC.msg + (ui.busy ? 'Lager husstanden …' : 'Inviter med melding') + '</button></div>' +
+        '<p class="hint">Har noen i husstanden allerede en? Åpne lenka de sendte deg, eller koble til med koden under.</p>';
     }
+    if (syncMode()) h += '<h3 class="hs-h">Denne telefonen</h3>' + phoneRowsHtml();
     h += '</section>';
     main.innerHTML = h;
   }
 
   function renderJoin(hid, secret) {
-    var h = '<section class="page" data-page="join"><div class="page-head"><h2>Bli med i husstanden</h2></div>';
+    // v0.9: gamle #join=-lenker får den nye siden «Du er invitert til husstanden» (6a/6b), uten utløpsdato.
+    setTabsHidden(true);
     if (!syncMode()) {
-      h += '<p class="empty">Deling er ikke satt opp ennå.</p><a class="btn" href="#uke">Tilbake</a></section>';
-      main.innerHTML = h;
+      main.innerHTML = '<section class="page" data-page="join"><div class="join"><h2>Du er invitert til husstanden</h2><p class="empty">Deling er ikke satt opp ennå.</p><a class="btn" href="#uke">Tilbake</a></div></section>';
       return;
     }
-    h += '<p>Du er invitert til å dele retter, ukeplan og handleliste.</p>';
-    if (hh && hh.hid !== hid) h += '<p class="hint">Denne telefonen er allerede med i en annen husstand. Blir du med her, byttes husstanden på denne telefonen.</p>';
-    else if (!hh && hasOwnData()) h += '<p class="hint">Det som ligger på denne telefonen nå blir ikke slått sammen, men tas vare på som sikkerhetskopi.</p>';
-    if (ui.error) h += '<p class="form-error" data-testid="feil">' + esc(ui.error) + '</p>';
-    h += '<div class="form-actions plain"><button type="button" class="btn primary" data-action="join" data-hid="' + esc(hid) + '" data-secret="' + esc(secret) + '" data-testid="bli-med"' + (ui.busy ? ' disabled' : '') + '>' +
-      (ui.busy ? 'Kobler til …' : 'Bli med') + '</button><a class="btn" href="#uke">Avbryt</a></div></section>';
-    main.innerHTML = h;
+    main.innerHTML = joinPageHtml(hid, secret, null);
   }
 
   /* ---------- Endringer (lokalt eller i husstanden) ---------- */
@@ -1185,11 +1202,18 @@
 
   function route() {
     var raw = location.hash || '';
+    if (NEW_HOME) return renderMovePage();   // v0.9: den gamle adressen viser bare flyttesiden
     var h = raw.replace(/^#\/?/, '');
     var parts = h.split('/');
     var tab = parts[0];
     var join = parseJoin(raw);
-    var special = join || tab === 'husstand';
+    var inn = parseInn(raw), flytt = parseFlytt(raw);
+    var connectFirst = !raw.replace(/^#/, '') || tab === 'uke' && !parts[1] ? showConnectFirst() : false;
+    var intro = !join && !inn && !flytt && !connectFirst && (!raw.replace(/^#/, '') || tab === 'uke' && !parts[1]) && showIntro();
+    var introConnect = tab === 'koble' && parts[1] === 'intro';
+    var special = join || inn || flytt || connectFirst || intro || tab === 'husstand' || tab === 'koble';
+    if (!intro) document.body.classList.remove('v9-intro');
+    setTabsHidden(!!(join || inn || flytt || connectFirst || intro || introConnect));
     if (!special && ['retter', 'uke', 'liste'].indexOf(tab) < 0) tab = 'uke';
     var links = document.querySelectorAll('.tabs a');
     for (var i = 0; i < links.length; i++) {
@@ -1205,6 +1229,12 @@
       }
       return renderJoin(join.hid, join.secret);
     }
+    if (inn) return renderInvitePage(inn);
+    if (flytt) return renderFlytt(flytt);
+    if (connectFirst) return renderConnect(false);
+    if (intro) return renderIntro();
+    if (introConnect) return renderConnect('intro');
+    if (tab === 'koble') return renderConnect(true);
     if (tab === 'husstand') return renderHousehold();
     if (tab === 'retter') {
       if (parts[1] === 'ny') renderRecipeForm(null);
@@ -1227,7 +1257,7 @@
     return '<div class="ing-row" data-new="' + (ing.name ? '0' : '1') + '">' +
       '<div class="ing-top"><input class="ing-name" type="text" placeholder="Ingrediens" aria-label="Ingrediens" value="' + esc(ing.name) + '" autocomplete="off" list="known-ings">' +
       // v0.4.3: basisvare (krydder, mel, olje o.l.) legges ikke rett på lista. Standard fra tabellen, kan endres her.
-      '<label class="ing-basis" title="Basisvare: legges ikke rett på lista, men i basisvare-meldingen på Liste">' +
+      '<label class="ing-basis" title="Basisvare: legges ikke rett på lista, men i basisvare-meldingen på Handleliste">' +
       '<input type="checkbox" class="ing-basis-cb"' + (isB ? ' checked' : '') + (typeof ing.basis === 'boolean' ? ' data-touched="1"' : '') + '> Basis</label></div>' +
       '<div class="ing-sub">' +
       '<input class="ing-qty" type="text" inputmode="decimal" placeholder="Mengde" aria-label="Mengde" value="' + esc(formatQty(ing.qty)) + '">' +
@@ -1517,12 +1547,10 @@
     }
 
     var h = '<section class="page' + (swapFrom ? ' swapping' : '') + '" data-page="uke">';
-    // v0.6.2 (spec v0.6.2 punkt 1): kort velkomst øverst i Uke, bare før første middag er valgt.
-    if (showWelcome()) {
-      h += '<section class="welcome" aria-label="Velkommen" data-testid="velkomst">' +
-        '<p class="welcome-t">Velg middager for uka, så lager handlelista seg selv.</p>' +
-        '<p class="welcome-tag">Husets felles huskeliste</p>' +
-        '<button type="button" class="welcome-x" data-action="welcome-close" data-testid="velkomst-lukk" aria-label="Lukk velkomsten">×</button></section>';
+    // v0.9: ett kort om gangen – Kom i gang (velkomst + husstand + deling), ellers v0.8-kortet, ellers hjemskjerm-kortet.
+    var startOn = !swapFrom && showStart(), startStep = startOn ? startSteps(dates).active : 0;   // byttemodus: kortet viker
+    if (startOn) {
+      h += startCardHtml(dates);
     } else if (showHsCard()) {
       h += '<section class="hs-card" data-testid="hs-forste" aria-label="Husstandens størrelse">' +
         '<h3>Hvor mange spiser middag hos dere?</h3>' +
@@ -1531,10 +1559,12 @@
         '<div class="hs-acts">' +
         '<button type="button" class="btn primary" data-action="hs-bruk" data-testid="hs-bruk">Bruk</button>' +
         '<button type="button" class="btn ghost" data-action="hs-hopp" data-testid="hs-hopp">Hopp over</button></div></section>';
+    } else if (!swapFrom && showInstallCard(dates)) {
+      h += installCardHtml();
     }
     h += weekNav(dates);
     h += '<div class="week-tools"><p class="summary" data-testid="uke-oppsummering">' + count + ' av 7 kvelder har middag</p>' +
-      '<button type="button" class="btn small" data-action="fill-weekdays" data-testid="fyll"' + (emptyWeekdays ? '' : ' disabled') + '>Fyll man–fre</button></div>';
+      (startStep === 1 ? '' : '<button type="button" class="btn small" data-action="fill-weekdays" data-testid="fyll"' + (emptyWeekdays ? '' : ' disabled') + '>Fyll man–fre</button>') + '</div>';   // v0.9: ikke to like knapper
     if (ui.notice) { h += '<p class="notice" role="status" data-testid="uke-notis">' + esc(ui.notice) + '</p>'; ui.notice = ''; }
     h += '<ol class="days">';
     dates.forEach(function (d, i) {
@@ -1591,7 +1621,7 @@
       h += '</li>';
     });
     h += '</ol>';
-    if (showShareCard() && !swapFrom) {
+    if (false && showShareCard() && !swapFrom) {   // v0.9: delingskortet er steg 3 i Kom i gang
       // v0.4.6: diskret delingskort etter første plan (ikke første skjerm).
       h += '<aside class="share-card" data-testid="del-kort" aria-labelledby="del-kort-h">' +
         '<p class="share-h" id="del-kort-h">Handler dere sammen?</p>' +
@@ -1687,6 +1717,7 @@
   // Tomme dager man–fre fylles (planFill). Ingen rett to ganger i uka; satte dager røres ikke.
   function fillWeekdays() {
     var dates = weekDates(ui.weekOffset);
+    var fromCard = showStart() && startSteps(dates).active === 1;   // v0.9: Fyll fra Kom i gang-kortet (steg 1)
     var used = {}, last = {};
     dates.forEach(function (d) {
       var id = state.week_plan[d];
@@ -1713,6 +1744,7 @@
     if (filled === empty.length) ui.notice = 'Fylte ' + filled + (filled === 1 ? ' dag' : ' dager') + what + '.' + why + ' Bytt gjerne en kveld.';
     else if (!filled) ui.notice = 'Ingen ledige retter – alle rettene er allerede brukt denne uka.';
     else ui.notice = 'Fylte ' + filled + ' av ' + empty.length + ' tomme dager' + what + ' – det er ikke flere ledige retter.' + why + ' Legg til flere under Retter.';
+    if (filled && fromCard) ui.notice = '';   // v0.9: Kom i gang-kortet sier det samme
     renderUke();
   }
 
@@ -1757,12 +1789,14 @@
 
   /* ---------- Liste ---------- */
 
-  function buildList() {
+  // peek = bare tell/les (Kom i gang); ingen lagring eller opprydding i state
+  function buildList(peek) {
     var dates = weekDates(ui.weekOffset);
     var weekKey = dates[0];
     var map = {};
     var order = [];
     var RANK = { dinner: 0, staple: 1, extra: 2 };
+    var mergeTo = {};
     // v0.4.1: samme vare i omregnbare enheter (dl/l/ml/ss/ts, g/kg, + pakningstabellen) blir én linje.
     function add(src, from, name, qty, unit, aisle, extraId) {
       var nn = normName(name);
@@ -1772,13 +1806,18 @@
       if ((qty == null || qty === '') && /^(|pk|stk|kartong|beger)$/.test(unit) && U.packFor(nn) && U.conversion(nn, unit)) qty = 1;
       var conv = U.conversion(nn, unit);
       var base = conv ? conv.base : unit;
-      var key = nn + '|' + base;
+      // v0.9 (Trude): «Tomat»/«Tomater» og «Melk»/«Lettmelk» blir én linje. Linja beholder nøkkelen til navnet som kom
+      // først, så en uke med bare ett av navnene får samme nøkkel som før (eldre telefoner ser samme avkrysning).
+      var mk = listMergeName(nn) + '|' + base;
+      var key = mergeTo[mk] || (nn + '|' + base);
+      if (!mergeTo[mk]) mergeTo[mk] = key;
       var it = map[key];
       if (!it) {
         it = map[key] = { key: key, nn: nn, name: String(name).trim(), qty: null, unit: base, parts: {}, units: [],
-          aisle: normAisle(aisle), checked: false, source: src, sources: [], recipes: [], extra_ids: [] };
+          aisle: normAisle(aisle), checked: false, source: src, sources: [], recipes: [], extra_ids: [], aliases: [] };
         order.push(key);
       }
+      if (nn !== it.nn && it.aliases.indexOf(nn) < 0) it.aliases.push(nn);
       if (it.units.indexOf(unit) < 0) it.units.push(unit);
       if (qty != null && isFinite(qty)) it.parts[unit] = round3((it.parts[unit] || 0) + Number(qty));
       if (it.sources.indexOf(src) < 0) it.sources.push(src);
@@ -1870,6 +1909,16 @@
       // Nøkler fra før v0.4.1 (navn|enhet per enhet), f.eks. «melk|dl» som nå er en del av «melk|ml».
       var srcKeys = it.units.map(function (u) { return { k: it.nn + '|' + u, f: U.factorFor(it.nn, u) }; });
       it.legacyKeys = srcKeys.filter(function (x) { return x.k !== k; });
+      var unitLegacy = it.legacyKeys.slice();
+      // v0.9: avkrysning og +/- som ble gjort på det andre navnet (før linjene ble slått sammen) følger med.
+      var aliasKeys = [];
+      it.aliases.forEach(function (a) {
+        it.units.concat([it.unit]).forEach(function (u) {
+          var ak = a + '|' + u;
+          if (ak !== k && !aliasKeys.some(function (x) { return x.k === ak; })) aliasKeys.push({ k: ak, f: U.factorFor(a, u) });
+        });
+      });
+      it.legacyKeys = it.legacyKeys.concat(aliasKeys);
       var legacyAdj = 0;
       it.legacyKeys.forEach(function (x) { if (adj[x.k]) legacyAdj += adj[x.k] * x.f; });
       it.adjust_own = adj[k] || 0;
@@ -1888,17 +1937,21 @@
       // Blir BEHOVET større enn det som ble krysset av, vises varen som ukrysset igjen. Økning innenfor samme
       // pakning (7 dl → 9 dl når 1 l er krysset av) lar avkrysningen stå.
       var c = checks[k];
-      if (!c && it.legacyKeys.length && !srcKeys.some(function (x) { return x.k === k; }) &&
-          it.legacyKeys.every(function (x) { return checks[x.k]; })) {
-        c = it.legacyKeys.some(function (x) { return checks[x.k] === true; }) ? true
-          : round3(it.legacyKeys.reduce(function (a, x) { return a + checks[x.k] * x.f; }, 0));
+      if (!c && unitLegacy.length && !srcKeys.some(function (x) { return x.k === k; }) &&
+          unitLegacy.every(function (x) { return checks[x.k]; })) {
+        c = unitLegacy.some(function (x) { return checks[x.k] === true; }) ? true
+          : round3(unitLegacy.reduce(function (a, x) { return a + checks[x.k] * x.f; }, 0));
+      }
+      if (!c && aliasKeys.length) {
+        var ac = aliasKeys.filter(function (x) { return checks[x.k]; });
+        if (ac.length) c = ac.some(function (x) { return checks[x.k] === true; }) ? true : round3(ac.reduce(function (a, x) { return a + checks[x.k] * x.f; }, 0));
       }
       it.tick = c || false;
       it.checked = !!c && !(typeof c === 'number' && it.qty != null && it.qty > c + 1e-9);
       it.basisvare = !!basisAdded[it.nn] && it.sources.indexOf('dinner') >= 0;
       return it;
     });
-    if (!hh) {
+    if (!hh && !peek) {
       // Lokal modus: behold generert liste (for eldre versjoner) og rydd bort gamle uker.
       var oldest = weekDates(Math.min(0, ui.weekOffset) - 8)[0];
       var otherWeeks = state.list_items.filter(function (it) { return it.week !== weekKey && it.week && it.week >= oldest; });
@@ -2156,7 +2209,7 @@
   }
   function showHsCard() {
     // Etter velkomst; én gang; ikke samtidig med velkomst/del
-    if (showWelcome()) return false;
+    if (showStart()) return false;   // v0.9: steg 2 i Kom i gang
     if (hsAsked()) return false;
     if (ui.shareDismissed) { /* ok */ }
     return true;
@@ -2870,6 +2923,9 @@
       if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} }
     } else if (t.id === 'ai-name') {
       updateAddItemMatch();
+    } else if (t.id === 'fv-new-qty') {
+      var cq = main.querySelector('.fv-new'), vq = parseQty(t.value);
+      if (cq && vq > 0) { cq.setAttribute('data-qty', String(round3(vq))); fvNewSync(cq); }
     }
   });
   main.addEventListener('keydown', function (e) {
@@ -3002,7 +3058,7 @@
           '<div class="guess">' +
           '<button type="button" class="g" data-action="fv-edit-guess" data-field="amt" data-testid="faste-ny-mengde"><span class="k">Mengde</span>1 ' + esc(gu) + '</button>' +
           '<button type="button" class="g" data-action="fv-edit-guess" data-field="aisle" data-testid="faste-ny-avdeling"><span class="k">Avdeling</span>' + esc(aisleLabel(ga)) + '</button>' +
-          '</div><span class="small">Gjettet fra navnet. Trykk for å endre.</span>' +
+          '</div><div class="fv-new-ed" id="fv-new-ed" hidden></div><span class="small">Gjettet fra navnet. Trykk for å endre.</span>' +
           '<div class="acts"><label class="check"><input type="checkbox" id="fv-on-list" data-testid="faste-ny-pa-lista">På lista uke ' + wn + '</label>' +
           '<button type="button" class="btn primary" data-action="fv-add" data-testid="faste-legg-til">Legg til</button></div></div>';
         if (filtered.length) h += '<p class="fv-hit" style="margin-top:14px">' + filtered.length + ' faste varer passer.</p>';
@@ -3151,6 +3207,918 @@
     }
   }
 
+  /* ---------- v0.9: Første møte og eget hjem (merkevare/forste-mote) ---------- */
+  var START_KEY = 'ukeshandel:startCard';   // 'open' = Kom i gang vises · 'closed' = × / Ikke nå · 'done' = invitasjonen er sendt
+  var INSTALL_KEY = 'ukeshandel:install';   // { shown, last, done, seen, connectSkip } – hjemskjerm-kortet (§6)
+  var MOVED_KEY = 'ukeshandel:moved';       // bare på den gamle adressen: '1' = flyttet, send rett videre (§7)
+  // Den gamle adressen (mariuskfoss.github.io/handleliste) viser flyttesiden. KNAGGEN_NEW_HOME kan settes for test.
+  // Testkrok (som KNAGGEN_NEW_HOME): eldre testsuiter kjører uten introsiden, se tests/v09compat.js
+  var SKIP_INTRO = !!window.KNAGGEN_SKIP_INTRO;
+  var NEW_HOME = window.KNAGGEN_NEW_HOME || (location.hostname === 'mariuskfoss.github.io' ? 'https://app.knaggen.no/' : null);
+  var PUBLIC_HOST = 'app.knaggen.no';
+  var INVITE_RE = /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$/;
+  var DAY_MS = 864e5;
+  var SVG0 = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"';
+  var IC = {
+    check: SVG0 + '><path d="M5 12.5l4.5 4.5L19 7.5" stroke-width="3"/></svg>',
+    msg: SVG0 + ' class="ico-in"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 3.5V17A2.5 2.5 0 0 1 4 14.5z"/></svg>',
+    copy: SVG0 + ' class="ico-in"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5"/><path d="M15.5 8.5V6.5A2.5 2.5 0 0 0 13 4H6.5A2.5 2.5 0 0 0 4 6.5V13a2.5 2.5 0 0 0 2.5 2.5h2"/></svg>',
+    paste: SVG0 + ' class="ico-in"><rect x="5" y="4.5" width="14" height="16.5" rx="2.5"/><path d="M9 4.5V3.75A.75.75 0 0 1 9.75 3h4.5a.75.75 0 0 1 .75.75v.75M9 11h6M9 15h4"/></svg>',
+    uke: SVG0 + '><rect x="3.75" y="5.25" width="16.5" height="15" rx="3.5"/><path d="M3.75 10.25H20.25M8.5 3.25V6.75M15.5 3.25V6.75"/><circle class="ball" fill="currentColor" cx="15.25" cy="15.25" r="2.1" stroke="none"/></svg>',
+    liste: SVG0 + '><path d="M10 6.5H20M10 12H20M10 17.5H16.5"/><circle class="ball" fill="currentColor" cx="5" cy="6.5" r="2.1" stroke="none"/><circle cx="5" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="5" cy="17.5" r="1.9" fill="currentColor" stroke="none"/></svg>',
+    felles: SVG0 + '><circle cx="9" cy="8" r="3.25"/><path d="M3 20c0-3.4 2.7-5.75 6-5.75s6 2.35 6 5.75"/><circle class="ball" cx="17.5" cy="9" r="2.1" fill="currentColor" stroke="none"/><path d="M16.5 14.4c2.6.3 4.5 2.4 4.5 5.6"/></svg>',
+    del: SVG0 + '><path d="M12 3v12M7.5 7.5L12 3l4.5 4.5"/><path d="M8 11H6.5A1.5 1.5 0 0 0 5 12.5v7A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-7a1.5 1.5 0 0 0-1.5-1.5H16"/></svg>',
+    plus: SVG0 + '><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M12 8.5v7M8.5 12h7"/></svg>',
+    meny: SVG0 + '><circle cx="12" cy="5.5" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="18.5" r="1.4" fill="currentColor" stroke="none"/></svg>',
+    phone: SVG0 + '><rect x="6.5" y="2.75" width="11" height="18.5" rx="2.75"/><path d="M10.5 17.75h3"/></svg>'
+  };
+  var ICON_IMG = '<picture><source srcset="icons/favicon.svg" media="(prefers-color-scheme: light)"><img src="icons/icon-192-mork.png" alt="" width="48" height="48"></picture>';
+
+  // Plattform (§6). Ingen sniffing brukes til noe sikkerhetsmessig – bare til hvilken veiledning som vises.
+  var envInfo = (function () {
+    var ua = navigator.userAgent || '';
+    var ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    var ios = ipad || /iPhone|iPod/.test(ua);
+    var android = /Android/.test(ua);
+    var inapp = /FBAN|FBAV|FB_IAB|FBIOS|Instagram|Snapchat|musical_ly|BytedanceWebview|Line\/|MicroMessenger|; wv\)/.test(ua);
+    var app = /Messenger|Orca-Android|MESSENGER/.test(ua) ? 'Messenger' : /Instagram/.test(ua) ? 'Instagram' : /Snapchat/.test(ua) ? 'Snapchat'
+      : /FBAN|FBAV|FB_IAB|FBIOS/.test(ua) ? 'Facebook' : /musical_ly|Bytedance/.test(ua) ? 'TikTok' : '';
+    var iosOther = ios && /CriOS|EdgiOS|FxiOS|OPiOS/.test(ua);
+    return { ios: ios, ipad: ipad, android: android, inapp: inapp, app: app, iosOther: iosOther, phone: ios || android };
+  })();
+  function isStandalone() {
+    try {
+      return navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
+    } catch (e) { return false; }
+  }
+  function canShareText() { return !!(navigator.share && envInfo.phone); }
+  function fmtCode(c) { return c ? c.slice(0, 4) + '-' + c.slice(4) : ''; }
+  // Innskriving: små bokstaver, mellomrom og bindestrek godtas (§5)
+  function normCode(s) {
+    var c = String(s || '').toUpperCase().replace(/[\s\-\u2010-\u2015_.·]/g, '');
+    return INVITE_RE.test(c) ? c : null;
+  }
+  function dm(ms) { var d = new Date(ms); return d.getDate() + '.' + (d.getMonth() + 1) + '.'; }
+  function homeBase() { return NEW_HOME || location.href.split('#')[0].split('?')[0]; }
+  function inviteLink(inv) { return inv && inv.code ? homeBase() + '#inn=' + inv.code : shareLink(); }
+  function inviteMessage(inv) {
+    if (!inv || !inv.code) return 'Bli med i husstanden vår på Knaggen, så har vi felles middager og handleliste: ' + shareLink();
+    return 'Bli med i husstanden vår på Knaggen, så har vi felles middager og handleliste: ' + inviteLink(inv) +
+      ' Koden er ' + fmtCode(inv.code) + ' og gjelder til ' + dm(inv.expires_at);
+  }
+  function validInvite() {
+    var inv = ui.invite || (hh && hh.invite) || null;
+    return inv && inv.code && inv.expires_at > Date.now() + 60000 ? inv : null;
+  }
+  function setInvite(inv, mine) {
+    ui.invite = inv;
+    if (!hh) return;
+    var cur = readHH() || {};
+    if (cur.hid !== hh.hid) return;
+    hh.invite = inv;
+    var changed = JSON.stringify(cur.invite || null) !== JSON.stringify(inv || null);
+    if (changed) { if (inv) cur.invite = inv; else delete cur.invite; }   // ingen ny nøkkel for husstander uten kode
+    if (mine && !cur.invited) { cur.invited = hh.invited = true; cur.inviteBase = hh.inviteBase = Math.max(1, ui.members || 1); changed = true; }
+    if (changed) writeHH(cur);
+  }
+  function inviteErrText(e) {
+    var m = (e && (e.code || e.message)) || '';
+    if (/no-server|unavailable|network|timeout|deadline|dynamically imported module|Importing a module script failed/i.test(m) || !navigator.onLine) return 'Får ikke kontakt. Invitasjonen lages når du har nett.';
+    return errorText(e);
+  }
+
+  /* --- Husstand og kode (lages først ved Inviter, iPhone-installasjon og flytting – aldri for alle besøkende) --- */
+  var ensureHHp = null;
+  function ensureHousehold() {
+    if (hh) return (syncReady || Promise.resolve()).then(function () { return hh; });
+    if (ensureHHp) return ensureHHp;
+    if (!syncMode()) return Promise.reject(new Error('not-configured'));
+    var raw = lsGet(STORAGE_KEY);
+    if (raw && !lsGet(STORAGE_KEY + ':backup-before-household')) lsSet(STORAGE_KEY + ':backup-before-household', raw);
+    var snapshot = JSON.parse(JSON.stringify(state));
+    ui.movedOwn = hasOwnData();
+    ensureHHp = Sync.init().then(function () { return createFromLocal(false); }).then(function (v) {
+      ensureHHp = null;
+      enterHousehold(readHH() || { hid: v.hid, secret: v.secret, core_done: true, migrated: true }, snapshot);
+      return syncReady.then(function () { return hh; });
+    }, function (e) {
+      ensureHHp = null;
+      var cur = readHH();
+      if (cur && !cur.core_done) { try { localStorage.removeItem(HH_KEY); } catch (x) { /* ignorer */ } }
+      throw e;
+    });
+    return ensureHHp;
+  }
+  // Én aktiv kode per husstand. Finnes det en som gjelder minst et døgn til, brukes den. Ellers lages en ny (den gamle
+  // slettes i samme batch). Mangler reglene for koder (eldre regler), brukes den varige lenka i stedet.
+  function ensureInvite(forceNew) {
+    return ensureHousehold().then(function () {
+      var cur = validInvite();
+      if (!forceNew && cur && cur.expires_at - Date.now() > DAY_MS) return cur;
+      var old = ui.invite || (hh && hh.invite);
+      return Sync.createInvite(hh.hid, hh.secret, old && old.code).then(function (inv) {
+        setInvite(inv, true);
+        return inv;
+      }, function (e) {
+        if (e && e.code === 'permission-denied') { setInvite(ui.invite || null, true); return { code: null }; }
+        throw e;
+      });
+    });
+  }
+
+  /* --- Kom i gang (§4): velkomst v0.6.2 + husstandskort v0.8 + delingskort v0.4.6 i ett kort --- */
+  function showStart() {
+    var s = lsGet(START_KEY);
+    if (s === 'closed' || s === 'done') return false;
+    if (s === 'open') {
+      if (hh && (ui.members || 0) > 1) { lsSet(START_KEY, 'done'); return false; }
+      return true;
+    }
+    if (NEW_HOME || hh || ui.welcomeClosed || lsGet(WELCOME_KEY) === '1') return false;
+    // Som velkomstkortet i v0.6.2: bare for en ny telefon uten middager og uten egne data
+    if (hasPlan() || hasOwnData()) return false;
+    if (hsAsked() && hadLocalData) return false;
+    lsSet(START_KEY, 'open');
+    ui.welcomeShown = true;
+    return true;
+  }
+  function weekCount(dates) {
+    return dates.filter(function (d) { return !!state.oneoffs[d] || !!(state.week_plan[d] && recipeById(state.week_plan[d])); }).length;
+  }
+  function startSteps(dates) {
+    var n = weekCount(dates);
+    var s1 = n > 0, s2 = hsAsked(), s3 = lsGet(START_KEY) === 'done' || (hh && (ui.members || 0) > 1);
+    var active = !s1 ? 1 : !s2 ? 2 : !s3 ? 3 : 0;
+    return { n: n, s1: s1, s2: s2, s3: s3, active: active };
+  }
+  function listCount() {
+    try { return buildList(true).items.length; } catch (e) { return 0; }
+  }
+  function startCardHtml(dates) {
+    var st = startSteps(dates);
+    if (!SKIP_INTRO) return startCardCompact(st);
+    var h = '<section class="km" aria-labelledby="km-t" data-testid="kom-i-gang">' +
+      '<p class="km-t" id="km-t">Velg middager for uka, så lager handlelista seg selv.</p>' +
+      '<p class="km-tag">Husets felles huskeliste</p>' +
+      '<button type="button" class="km-x" data-action="km-close" data-testid="kom-i-gang-lukk" aria-label="Lukk Kom i gang">×</button>' +
+      '<ol class="km-steps" aria-label="Kom i gang, tre steg">';
+    var done = '<span class="n">' + IC.check + '</span>';
+    // 1 Velg middager
+    if (st.s1) {
+      h += '<li class="done" data-step="1">' + done + '<span class="h"><span class="sr">ferdig: </span>' +
+        (st.n === 1 ? '1 middag valgt' : st.n + ' middager valgt <span class="s">· bytt gjerne en kveld</span>') + '</span></li>';
+    } else {
+      h += '<li class="on" data-step="1"><span class="n">1</span><span class="h">Velg middager</span><div class="km-body">' +
+        '<p>Trykk på en dag under, eller fyll hverdagene med raske retter. Du kan bytte etterpå.</p>' +
+        '<div class="km-acts"><button type="button" class="btn primary" data-action="fill-weekdays" data-testid="fyll">Fyll man–fre</button></div></div></li>';
+    }
+    // 2 Lista lager seg selv
+    if (st.s2) {
+      var p = hsPeople(), nItems = listCount();
+      h += '<li class="done" data-step="2">' + done + '<span class="h"><span class="sr">ferdig: </span>Lista: ' + nItems + (nItems === 1 ? ' vare' : ' varer') +
+        (p && hsScaleOn() ? ' for ' + esc(SC.peopleText(p, true)) : ' <span class="s">· mengder som i oppskriftene</span>') +
+        ' <a href="#liste" data-testid="km-se-lista">Se lista ›</a></span></li>';
+    } else if (st.active === 2) {
+      var ni = listCount();
+      h += '<li class="on" data-step="2"><span class="n">2</span><span class="h">Lista lager seg selv</span><div class="km-body">' +
+        '<p>' + ni + (ni === 1 ? ' vare ligger klar.' : ' varer ligger klare.') + ' <b>Hvor mange spiser middag hos dere?</b></p>' +
+        '<p class="m">Da passer mengdene i rettene fra Knaggen. Egne retter endres ikke.</p>' +
+        peopleCountersHtml('hs0', { voksen: 2, barn: 2, smabarn: 0 }) +
+        '<div class="km-acts"><button type="button" class="btn primary" data-action="hs-bruk" data-testid="hs-bruk">Bruk</button>' +
+        '<button type="button" class="btn ghost" data-action="hs-hopp" data-testid="hs-hopp">Hopp over</button></div></div></li>';
+    } else {
+      h += '<li class="todo" data-step="2"><span class="n">2</span><span class="h">Lista lager seg selv</span></li>';
+    }
+    // 3 Del med den andre
+    if (st.active === 3) {
+      h += '<li class="on" data-step="3"><span class="n">3</span><span class="h">Del med den andre</span><div class="km-body">' +
+        '<p>Handler dere sammen? Send en invitasjon på melding, så ser dere samme uke og liste. Ingen konto.</p>' +
+        (ui.kmError ? '<p class="form-error" data-testid="km-feil">' + esc(ui.kmError) + '</p>' : '') +
+        '<div class="km-acts"><button type="button" class="btn primary" data-action="km-invite" data-testid="km-inviter">' + (ui.kmError ? 'Prøv igjen' : 'Inviter med melding') + '</button>' +
+        '<button type="button" class="btn ghost" data-action="km-later" data-testid="km-ikke-na">Ikke nå</button></div></div></li>';
+    } else {
+      h += '<li class="todo" data-step="3"><span class="n">3</span><span class="h">Del med den andre</span></li>';
+    }
+    return h + '</ol></section>';
+  }
+  // v0.9 endring (spec linje ~193): introsiden har allerede vist taglinen og spurt om husstanden, så kortet i Uke
+  // viser bare det som gjenstår: «Velg middager» (til en middag er valgt) og «Del med den andre». Nummereres 1, 2 …
+  function startCardCompact(st) {
+    var steps = [];
+    if (!st.s1) steps.push(['1', 'on', 'Velg middager', '<p>Trykk på en dag under, eller fyll hverdagene med raske retter. Du kan bytte etterpå.</p>' +
+      '<div class="km-acts"><button type="button" class="btn primary" data-action="fill-weekdays" data-testid="fyll">Fyll man–fre</button></div>']);
+    if (!st.s2) {
+      // reserve: husstanden er ikke besvart (introsiden ble ikke vist) – samme steg som før
+      var ni = listCount();
+      steps.push(['2', st.active === 2 ? 'on' : 'todo', 'Lista lager seg selv', '<p>' + ni + (ni === 1 ? ' vare ligger klar.' : ' varer ligger klare.') + ' <b>Hvor mange spiser middag hos dere?</b></p>' +
+        '<p class="m">Da passer mengdene i rettene fra Knaggen. Egne retter endres ikke.</p>' +
+        peopleCountersHtml('hs0', { voksen: 2, barn: 2, smabarn: 0 }) +
+        '<div class="km-acts"><button type="button" class="btn primary" data-action="hs-bruk" data-testid="hs-bruk">Bruk</button>' +
+        '<button type="button" class="btn ghost" data-action="hs-hopp" data-testid="hs-hopp">Hopp over</button></div>']);
+    }
+    steps.push(['3', st.active === 3 ? 'on' : 'todo', 'Del med den andre', '<p>Handler dere sammen? Send en invitasjon på melding, så ser dere samme uke og liste. Ingen konto.</p>' +
+      (ui.kmError ? '<p class="form-error" data-testid="km-feil">' + esc(ui.kmError) + '</p>' : '') +
+      '<div class="km-acts"><button type="button" class="btn primary" data-action="km-invite" data-testid="km-inviter">' + (ui.kmError ? 'Prøv igjen' : 'Inviter med melding') + '</button>' +
+      '<button type="button" class="btn ghost" data-action="km-later" data-testid="km-ikke-na">Ikke nå</button></div>']);
+    var words = ['', 'ett steg', 'to steg', 'tre steg'];
+    var h = '<section class="km km-compact" aria-labelledby="km-t" data-testid="kom-i-gang">' +
+      '<p class="km-t" id="km-t">' + (st.s1 ? 'Neste: del uka og lista.' : 'Velg middager for uka, så lager handlelista seg selv.') + '</p>' +
+      '<button type="button" class="km-x" data-action="km-close" data-testid="kom-i-gang-lukk" aria-label="Lukk Kom i gang">×</button>' +
+      '<ol class="km-steps" aria-label="Kom i gang, ' + words[steps.length] + ' igjen">';
+    steps.forEach(function (s, i) {
+      h += '<li class="' + s[1] + '" data-step="' + s[0] + '"><span class="n">' + (i + 1) + '</span><span class="h">' + s[2] + '</span>' +
+        (s[1] === 'on' ? '<div class="km-body">' + s[3] + '</div>' : '') + '</li>';
+    });
+    return h + '</ol></section>';
+  }
+
+  /* --- Introsiden (v0.9 endring): én skjerm for nye besøkende før Uke --- */
+  function showIntro() {
+    if (SKIP_INTRO || NEW_HOME || hh || hsAsked()) return false;
+    if (envInfo.ios && isStandalone()) return false;   // iPhone fra Hjem-skjerm: Koble til først, ingen intro (spec)
+    return showStart();
+  }
+  function renderIntro() {
+    setTabsHidden(true);
+    document.body.classList.add('v9-intro');
+    var h = '<section class="page intro" data-page="intro" aria-labelledby="intro-h">' +
+      '<div class="intro-top"><button type="button" class="linkbtn intro-skip" data-action="intro-hopp" data-testid="intro-hopp">Hopp over</button></div>' +
+      '<h1 class="intro-lockup" id="intro-h"><picture><source srcset="icons/knaggen-lockup-lys.svg" media="(prefers-color-scheme: light)">' +
+        '<img src="icons/knaggen-lockup-mork.svg" alt="Knaggen" width="176" height="48"></picture></h1>' +
+      '<p class="intro-tag">Husets felles huskeliste</p>' +
+      '<ol class="intro-lines" data-testid="intro-linjer">' +
+        '<li><span class="n">1</span>Velg middager for uka.</li>' +
+        '<li><span class="n">2</span>Handlelista lager seg selv.</li>' +
+        '<li><span class="n">3</span>Del med den andre. Ingen konto.</li></ol>' +
+      '<div class="intro-hs" role="group" aria-labelledby="intro-q">' +
+        '<h2 class="intro-q" id="intro-q">Hvor mange spiser middag hos dere?</h2>' +
+        '<p class="m">Da passer mengdene i rettene fra Knaggen.</p>' +
+        peopleCountersHtml('in0', { voksen: 2, barn: 2, smabarn: 0 }, { testid: 'intro-folk' }) +
+      '</div>' +
+      '<div class="intro-acts">' +
+        '<button type="button" class="btn primary wide" data-action="intro-start" data-testid="intro-kom-i-gang">Kom i gang</button>' +
+        '<a class="btn wide" href="#koble/intro" data-testid="intro-invitasjon">Jeg har en invitasjon</a>' +
+      '</div></section>';
+    main.innerHTML = h;
+  }
+  function introDone(people) {
+    if (people) saveHouseholdSize({ people: people, scale: true, asked: true });
+    else saveHouseholdSize({ people: null, scale: true, asked: true }, { toast: false });
+    document.body.classList.remove('v9-intro');
+    if ((location.hash || '').replace(/^#/, '') === 'uke') route(); else location.hash = '#uke';
+    focusEl('[data-testid="kom-i-gang"] [data-testid="fyll"]', '#main');
+  }
+
+  function closeStart() {
+    var prevHs = JSON.parse(JSON.stringify(hsState())), prevAskedLs = lsGet(HS_ASKED_KEY), skipped = false;
+    if (!hsAsked()) {
+      // × før steg 2 er besvart = Hopp over (v0.8: asked = true, people = null)
+      skipped = true;
+      state.household_size = { people: null, scale: prevHs.scale !== false, asked: true };
+      lsSet(HS_ASKED_KEY, '1'); save();
+      remote(function (w, hid) { return w.setHouseholdSettings(hid, state.household_size); });
+    }
+    lsSet(START_KEY, 'closed');
+    renderUke();
+    focusEl(".week-tools [data-testid=\"fyll\"]:not([disabled])", ".week-nav [data-action=\"week-next\"]");
+    toast('Husstand og invitasjon finner du under Retter → Husstand', UNDO_MS, { label: 'Angre', run: function () {
+      lsSet(START_KEY, 'open');
+      if (skipped) {
+        state.household_size = prevHs;
+        if (prevAskedLs == null) { try { localStorage.removeItem(HS_ASKED_KEY); } catch (e) { /* ignorer */ } }
+        save();
+        remote(function (w, hid) { return w.setHouseholdSettings(hid, state.household_size); });
+      }
+      if (main.querySelector('[data-page="uke"]')) renderUke(); else route();
+    } });
+  }
+
+  /* --- Ark (Inviter, iPhone, Android) – samme mønster som v0.8-arket: role=dialog, fokus på første knapp, Esc lukker --- */
+  function openV9Sheet(id, inner, onClose) {
+    closeV9Sheet(false);
+    var ov = document.createElement('div');
+    ov.className = 'overlay v9-overlay';
+    ov.id = id;
+    ov.innerHTML = '<div class="sheet v9-sheet" role="dialog" aria-modal="true" aria-labelledby="' + id + '-h">' + inner + '</div>';
+    ov.addEventListener('click', function (e) {
+      if (e.target === ov) { closeV9Sheet(true); return; }
+      var b = e.target.closest('[data-v9]');
+      if (b) v9SheetAction(b.getAttribute('data-v9'), b);
+    });
+    ov._onClose = onClose || null;
+    ov._back = document.activeElement;
+    document.body.appendChild(ov);
+    var f = ov.querySelector('.btn.primary:not([disabled])') || ov.querySelector('button');
+    if (f) try { f.focus({ preventScroll: true }); } catch (e) { f.focus(); }
+    return ov;
+  }
+  function v9Sheet() { return document.querySelector('body > .v9-overlay'); }
+  function closeV9Sheet(user) {
+    var ov = v9Sheet();
+    if (!ov) return;
+    var cb = ov._onClose, back = ov._back;
+    ov.parentNode.removeChild(ov);
+    if (cb) cb(!!user);
+    if (back && document.body.contains(back)) try { back.focus({ preventScroll: true }); } catch (e) { /* ignorer */ }
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && v9Sheet()) { e.preventDefault(); closeV9Sheet(true); }
+  }, true);
+
+  /* --- Inviter-arket (4) --- */
+  var invSheet = { shared: false, inv: null, error: '' };
+  function openInviteSheet() {
+    invSheet = { shared: false, inv: null, error: '', creating: !hh };
+    openV9Sheet('inv', inviteSheetHtml(), function () {
+      // Lukket med ✕ / Esc / utenfor: steg 3 regnes som gjort bare hvis meldingen eller lenka faktisk er sendt/kopiert
+      if (invSheet.shared) finishInvite();
+      else if (main.querySelector('[data-page="uke"]')) renderUke();   // f.eks. «Prøv igjen» i steg 3 etter feil
+    });
+    runInvite();
+  }
+  function runInvite() {
+    invSheet.error = '';
+    updateInviteSheet();
+    ensureInvite(false).then(function (inv) {
+      invSheet.inv = inv; invSheet.creating = false;
+      ui.kmError = '';
+      updateInviteSheet();
+    }, function (e) {
+      // En nettleser husker at Firebase-filene ikke kunne lastes (uten nett første gang). Da må siden lastes på nytt.
+      invSheet.reload = /dynamically imported module|Importing a module script failed|error loading dynamically/i.test((e && e.message) || '');
+      invSheet.error = inviteErrText(e); invSheet.creating = false;
+      ui.kmError = invSheet.error;
+      updateInviteSheet();
+    });
+  }
+  function inviteSheetHtml() {
+    var s = invSheet, inv = s.inv;
+    var h = '<div class="sheet-head"><div><h3 id="inv-h">Inviter den andre voksne</h3>' +
+      (inv ? '<span class="sub">Husstanden er laget · ingen konto</span>' : '') + '</div>' +
+      '<button type="button" class="icon-btn" data-v9="close" aria-label="Lukk">✕</button></div>';
+    if (s.error) {
+      return h + '<p class="form-error" role="alert" data-testid="inv-feil">' + esc(s.error) + '</p>' +
+        '<div class="inv-acts"><button type="button" class="btn primary" data-v9="retry" data-testid="inv-prov-igjen">Prøv igjen</button></div>';
+    }
+    if (!inv) return h + '<p class="inv-wait" role="status" data-testid="inv-venter">' + (s.creating ? 'Lager husstanden …' : 'Lager koden …') + '</p>';
+    h += '<p class="inv-lab">Meldingen</p><p class="inv-msg" data-testid="inv-melding">' + esc(inviteMessage(inv)).replace(esc(inviteLink(inv)), '<span class="l">' + esc(inviteLink(inv)) + '</span>') + '</p>';
+    if (inv.code) h += '<div class="code"><span><b data-testid="inv-kode">' + fmtCode(inv.code) + '</b><br><span class="sub">Koden kan skrives inn på ' + PUBLIC_HOST + '</span></span></div>';
+    h += '<div class="inv-acts"><button type="button" class="btn primary" data-v9="share" data-testid="inv-send">' + IC.msg + (canShareText() ? 'Send med melding' : 'Kopier meldingen') + '</button>' +
+      '<div class="row"><button type="button" class="btn" data-v9="copylink" data-testid="inv-kopier-lenke">' + IC.copy + 'Kopier lenke</button>' +
+      '<button type="button" class="btn" data-v9="done" data-testid="inv-ferdig">Ferdig</button></div></div>' +
+      (s.ok ? '<p class="copied inv-ok" role="status" data-testid="inv-ok">' + IC.check + '<span>' + esc(s.ok) + '</span></p>' : '') +
+      '<p class="inv-note">Alle med lenka eller koden kan bli med mens den gjelder. Send den bare til den du handler med.</p>';
+    return h;
+  }
+  function updateInviteSheet() {
+    var ov = document.getElementById('inv');
+    if (!ov) return;
+    var sh = ov.querySelector('.sheet');
+    var hadFocus = sh.contains(document.activeElement) ? document.activeElement.getAttribute('data-v9') : null;
+    sh.innerHTML = inviteSheetHtml();
+    var f = (hadFocus && sh.querySelector('[data-v9="' + hadFocus + '"]')) || sh.querySelector('.btn.primary') || sh.querySelector('button');
+    if (f) try { f.focus({ preventScroll: true }); } catch (e) { f.focus(); }
+  }
+  function finishInvite() {
+    if (lsGet(START_KEY) === 'open') lsSet(START_KEY, 'done');
+    ui.installMoment = ui.installMoment || 'A';
+    if (main.querySelector('[data-page="uke"]')) renderUke(); else if (!isFormRoute()) route();
+  }
+  // Delingsmenyen åpnes på et eget trykk (Safari/Chrome krever et ferskt trykk). Lenka står i teksten, ikke som url.
+  function shareInvite(inv, after) {
+    var text = inviteMessage(inv);
+    function copied() { copyQuiet(text, function (ok) { toast(ok ? 'Meldingen er kopiert. Lim den inn i en melding.' : 'Kunne ikke kopiere'); if (ok && after) after('Meldingen er kopiert. Lim den inn i en melding.'); }); }
+    if (canShareText()) {
+      navigator.share({ text: text }).then(function () { if (after) after(''); }, function (e) {
+        if (e && e.name === 'AbortError') return;
+        copied();
+      });
+    } else copied();
+  }
+  function copyQuiet(text, cb) {
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '0'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      cb(ok);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { cb(true); }, fallback);
+    else fallback();
+  }
+  function v9SheetAction(a, btn) {
+    if (a === 'close') { closeV9Sheet(true); return; }
+    if (a === 'retry') { if (invSheet.reload) { location.reload(); return; } runInvite(); return; }
+    if (a === 'share' && invSheet.inv) {
+      shareInvite(invSheet.inv, function (msg) { invSheet.shared = true; if (msg) { invSheet.ok = msg; updateInviteSheet(); } });
+      return;
+    }
+    if (a === 'copylink' && invSheet.inv) {
+      copyQuiet(inviteLink(invSheet.inv), function (ok) {
+        if (ok) { invSheet.shared = true; invSheet.ok = 'Lenka er kopiert'; toast('Lenka er kopiert'); } else invSheet.ok = 'Kunne ikke kopiere';
+        updateInviteSheet();
+      });
+      return;
+    }
+    if (a === 'done') {
+      var ov = v9Sheet(); if (ov) ov._onClose = null;
+      closeV9Sheet(false);
+      finishInvite();
+      return;
+    }
+    if (a === 'ios-copy') { iosCopy(true); return; }
+    if (a === 'inst-ok') {
+      var s = instState(); s.done = true; s.open = false; instSave(s);
+      ui.installVisible = false;
+      closeV9Sheet(false);
+      if (main.querySelector('[data-page="uke"]')) renderUke();
+      return;
+    }
+  }
+
+  /* --- Bli med (6a/6b), Koble til (9), flytting (§7) --- */
+  function parseInn(raw) {
+    var m = /^#inn=([A-Za-z0-9\-]{8,12})$/.exec(raw || '');
+    return m ? normCode(m[1]) || 'INVALID' : null;
+  }
+  function parseFlytt(raw) {
+    var m = /^#flytt=([A-Za-z0-9]{22,64})\.([A-Za-z0-9]{22,64})$/.exec(raw || '');
+    return m ? { hid: m[1], secret: m[2] } : null;
+  }
+  // Det brukeren limer inn: en Knaggen-lenke (#join=, #flytt=, #inn=, ?inn=) eller bare koden.
+  function parseAnyLink(text) {
+    text = String(text || '').trim();
+    var m = /#(?:join|flytt)=([A-Za-z0-9]{22,64})\.([A-Za-z0-9]{22,64})/.exec(text);
+    if (m) return { hid: m[1], secret: m[2] };
+    m = /[#?&]inn=([A-Za-z0-9\-]{8,12})/.exec(text);
+    if (m && normCode(m[1])) return { code: normCode(m[1]) };
+    var c = normCode(text);
+    return c ? { code: c } : null;
+  }
+  function setTabsHidden(on) { document.body.classList.toggle('v9-notabs', !!on); }
+  // Kobler til (samme joinHousehold som før) og lander i Uke. opts: { toast, moment, onError }
+  function joinWith(hid, secret, opts) {
+    opts = opts || {};
+    if (hh && hh.hid === hid) {
+      history.replaceState(null, '', location.pathname + location.search + '#uke');
+      if (opts.moment) ui.installMoment = opts.moment;
+      setTabsHidden(false); route();
+      toast(opts.already || 'Du er allerede med i denne husstanden');
+      return Promise.resolve();
+    }
+    ui.busy = true;
+    return Sync.init().then(function () { return Sync.joinHousehold(hid, secret); }).then(function () {
+      ui.busy = false;
+      var raw = lsGet(STORAGE_KEY);
+      if (raw && !lsGet(STORAGE_KEY + ':backup-before-household')) lsSet(STORAGE_KEY + ':backup-before-household', raw);
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+      var info = { hid: hid, secret: secret, core_done: true, migrated: false, joined: true };
+      writeHH(info);
+      ui.invite = null; ui.members = null;
+      enterHousehold(info);
+      if (opts.moment) ui.installMoment = opts.moment;
+      history.replaceState(null, '', location.pathname + location.search + '#uke');
+      setTabsHidden(false);
+      route();
+      toast(opts.toast || 'Du er med i husstanden. Uka og lista er felles.', 4000);
+    }, function (e) {
+      ui.busy = false;
+      if (opts.onError) opts.onError(e);
+    });
+  }
+  var invPage = null;   // { code, status: 'loading'|'ok'|'gone'|'net', data }
+  function renderInvitePage(code) {
+    setTabsHidden(true);
+    if (code === 'INVALID') invPage = { code: code, status: 'gone' };
+    if (!invPage || invPage.code !== code) {
+      invPage = { code: code, status: 'loading' };
+      fetchInvite(code);
+    }
+    var p = invPage, h = '<section class="page" data-page="join"><div class="join">';
+    if (!syncMode()) { main.innerHTML = h + '<p class="empty">Deling er ikke satt opp ennå.</p><a class="btn" href="#uke">Til Knaggen</a></div></section>'; return; }
+    if (p.status === 'loading') { main.innerHTML = h + '<p class="inv-wait" role="status">Henter invitasjonen …</p></div></section>'; return; }
+    if (p.status === 'gone') {
+      main.innerHTML = h + '<h2>Invitasjonen gjelder ikke lenger</h2><p class="lead" data-testid="inv-utlopt">Invitasjonen gjelder ikke lenger. Be den som sendte den om en ny (Retter → Husstand → Inviter).</p>' +
+        '<div class="acts"><a class="btn primary" href="#uke" data-testid="til-knaggen">Til Knaggen</a></div></div></section>';
+      return;
+    }
+    if (p.status === 'net') {
+      main.innerHTML = h + '<h2>Du er invitert til husstanden</h2><p class="form-error" data-testid="feil">Får ikke kontakt. Sjekk at du har nett og prøv igjen.</p>' +
+        '<div class="acts"><button type="button" class="btn primary" data-action="inv-refetch">Prøv igjen</button><a class="btn" href="#uke">Ikke nå</a></div></div></section>';
+      return;
+    }
+    main.innerHTML = joinPageHtml(p.data.hid, p.data.secret, p.data.expires_at);
+  }
+  function fetchInvite(code) {
+    Sync.init().then(function () { return Sync.getInvite(code); }).then(function (d) {
+      if (!invPage || invPage.code !== code) return;
+      invPage.status = 'ok'; invPage.data = d;
+      if (hh && hh.hid === d.hid) { joinWith(d.hid, d.secret, {}); return; }
+      if (parseInn(location.hash) === code) renderInvitePage(code);
+    }, function (e) {
+      if (!invPage || invPage.code !== code) return;
+      invPage.status = e && e.code === 'invite-gone' ? 'gone' : 'net';
+      if (parseInn(location.hash) === code) renderInvitePage(code);
+    });
+  }
+  // 6a / 6b. Brukes for #inn=KODE og for gamle #join=-lenker (da uten utløpsdato).
+  function joinPageHtml(hid, secret, expires) {
+    var h = '<section class="page" data-page="join"><div class="join">';
+    if (envInfo.inapp) {
+      var where = envInfo.app ? 'inne i ' + envInfo.app : 'i en app';
+      var br = envInfo.ios ? 'Safari' : 'Chrome';
+      h += '<div class="inapp-box" role="note" data-testid="inapp"><b>Du er i nettleseren ' + esc(where) + '</b>' +
+        '<p>Her kan ikke Knaggen legges på hjemskjermen, og den blir borte når du lukker. Åpne lenka i ' + br + ' først.' +
+        (envInfo.ios ? ' Trykk på ⋯ og velg å åpne i Safari.' : '') + '</p>' +
+        (envInfo.ios ? '<button type="button" class="btn" data-action="inapp-copy" data-testid="inapp-kopier">' + IC.copy + 'Kopier lenke</button>'
+          : '<button type="button" class="btn primary" data-action="inapp-chrome" data-testid="inapp-chrome">Åpne i Chrome</button>') + '</div>';
+    }
+    h += '<h2>Du er invitert til husstanden</h2><p class="lead">Knaggen er husets felles huskeliste.</p>' +
+      '<ul class="join-what"><li>' + IC.uke + '<div><b>Uka</b><span>Middagene dere velger, dag for dag</span></div></li>' +
+      '<li>' + IC.liste + '<div><b>Lista lager seg selv</b><span>Av middagene, med riktige mengder</span></div></li>' +
+      '<li>' + IC.felles + '<div><b>Felles</b><span>Det den ene legger inn, ser den andre med en gang</span></div></li></ul>';
+    if (hh && hh.hid !== hid) h += '<p class="hint">Denne telefonen er allerede med i en annen husstand. Blir du med her, byttes husstanden på denne telefonen.</p>';
+    else if (!hh && hasOwnData()) h += '<p class="hint">Det som ligger på denne telefonen nå blir ikke slått sammen, men tas vare på som sikkerhetskopi.</p>';
+    if (ui.error) h += '<p class="form-error" data-testid="feil">' + esc(ui.error) + '</p>';
+    var inapp = envInfo.inapp && !envInfo.ios ? ' ' : '';
+    h += '<div class="acts"><button type="button" class="btn' + (envInfo.inapp && !envInfo.ios ? '' : ' primary') + '" data-action="join" data-hid="' + esc(hid) + '" data-secret="' + esc(secret) + '" data-testid="bli-med"' + (ui.busy ? ' disabled' : '') + '>' +
+      (ui.busy ? 'Kobler til …' : envInfo.inapp ? 'Bli med her likevel' : 'Bli med') + '</button>' +
+      (envInfo.inapp ? '' : '<a class="btn" href="#uke" data-action="join-later" data-testid="ikke-na">Ikke nå</a>') + '</div>' + inapp;
+    h += '<p class="hint">Ingen konto.' + (expires ? ' Invitasjonen gjelder til ' + dm(expires) : '') + '</p></div></section>';
+    return h;
+  }
+  function inappChrome() {
+    // Android intent-URL kan ikke ha #, så koden sendes som ?inn= og fjernes igjen etter lasting (§9).
+    var code = invPage && invPage.code && invPage.code !== 'INVALID' ? invPage.code : null;
+    var u = new URL(location.href);
+    u.hash = '';
+    if (code) u.search = '?inn=' + code;
+    else { var j = parseJoin(location.hash); if (j) u.hash = '#join=' + j.hid + '.' + j.secret; }
+    location.href = 'intent://' + u.host + u.pathname + u.search + u.hash + '#Intent;scheme=' + u.protocol.replace(':', '') + ';package=com.android.chrome;end';
+  }
+
+  var connect = { error: '', busy: false };
+  function showConnectFirst() {
+    // iPhone fra Hjem-skjerm: egen lagring som starter tom → Koble til først (§4, skjerm 9)
+    return envInfo.ios && isStandalone() && !hh && !hasOwnData() && !instState().connectSkip && !NEW_HOME;
+  }
+  // fromHusstand: true = fra Retter → Husstand, 'intro' = «Jeg har en invitasjon» på introsiden, false = iPhone Hjem-skjerm
+  function connectMode() { var h = location.hash || ''; return /^#koble\/intro/.test(h) ? 'intro' : /^#koble/.test(h); }
+  function renderConnect(fromHusstand) {
+    var fromIntro = fromHusstand === 'intro';
+    if (fromIntro) fromHusstand = false;
+    setTabsHidden(!fromHusstand);
+    var h = '<section class="page" data-page="koble"><div class="connect">' +
+      (fromHusstand ? '<div class="page-head"><a class="back" href="#husstand">‹ Husstand</a></div>' : '') +
+      (fromIntro ? '<div class="page-head"><a class="back" href="#uke" data-testid="koble-tilbake">‹ Tilbake</a></div>' : '') +
+      '<h2>Koble til husstanden</h2>' +
+      '<p class="lead">' + (fromHusstand || fromIntro ? 'Lim inn lenka til husstanden, eller skriv koden fra invitasjonen.' + (hh ? ' Husstanden byttes på denne telefonen.' : '')
+        : 'Knaggen på Hjem-skjermen starter tom på iPhone. Lim inn lenka du kopierte, så er uka og lista her.') + '</p>' +
+      '<button type="button" class="btn primary wide" data-action="koble-lim" data-testid="koble-lim"' + (connect.busy ? ' disabled' : '') + '>' + IC.paste + (connect.busy ? 'Kobler til …' : 'Lim inn lenka') + '</button>' +
+      '<p class="or">eller skriv koden</p>' +
+      '<form class="code-in" id="koble-form" novalidate><input type="text" id="koble-kode" inputmode="text" autocapitalize="characters" autocomplete="one-time-code" spellcheck="false" placeholder="XXXX-XXXX" aria-label="Kode fra invitasjonen" data-testid="koble-kode" maxlength="14">' +
+      '<button type="submit" class="btn" data-testid="koble-til"' + (connect.busy ? ' disabled' : '') + '>Koble til</button></form>' +
+      (connect.error ? '<p class="form-error" role="alert" data-testid="koble-feil">' + esc(connect.error) + '</p>' : '') +
+      '<p class="hint">Koden står i invitasjonen, eller under Retter → Husstand på en telefon som er med.</p>' +
+      (fromHusstand || fromIntro ? '' : '<button type="button" class="linkbtn new" data-action="koble-ny" data-testid="koble-ny">Ny her? Start uten husstand</button>') +
+      '</div></section>';
+    var keep = document.activeElement && document.activeElement.id === 'koble-kode' ? document.getElementById('koble-kode').value : null;
+    main.innerHTML = h;
+    if (keep != null) { var ki = document.getElementById('koble-kode'); ki.value = keep; ki.focus(); }
+  }
+  function connectWith(parsed) {
+    var from = connectMode();
+    function fail(msg) { connect.busy = false; connect.error = msg; renderConnect(from); }
+    function netOr(e, msg) { var m = (e && (e.code || e.message)) || ''; return /no-server|unavailable|network|timeout/.test(m) || !navigator.onLine ? 'Får ikke kontakt. Sjekk at du har nett og prøv igjen.' : msg; }
+    if (!parsed) return fail('Fant ingen Knaggen-lenke. Skriv koden i stedet.');
+    connect.busy = true; connect.error = ''; renderConnect(from);
+    var p = parsed.code ? Sync.init().then(function () { return Sync.getInvite(parsed.code); }) : Promise.resolve(parsed);
+    p.then(function (d) {
+      return joinWith(d.hid, d.secret, { toast: 'Koblet til husstanden. Alt er her.', already: 'Koblet til husstanden. Alt er her.', onError: function (e) {
+        fail(netOr(e, 'Lenka virker ikke. Be om en ny lenke fra den som delte den.'));
+      } }).then(function () { connect.busy = false; });
+    }, function (e) {
+      fail(e && e.code === 'invite-gone' ? 'Finner ingen invitasjon med den koden. Sjekk tegnene.' : netOr(e, 'Finner ingen invitasjon med den koden. Sjekk tegnene.'));
+    });
+  }
+  function pasteConnect() {
+    if (!(navigator.clipboard && navigator.clipboard.readText)) { connect.error = 'Fant ingen Knaggen-lenke. Skriv koden i stedet.'; renderConnect(connectMode()); return; }
+    navigator.clipboard.readText().then(function (t) { connectWith(parseAnyLink(t)); }, function () {
+      connect.error = 'Fant ingen Knaggen-lenke. Skriv koden i stedet.'; renderConnect(connectMode());
+    });
+  }
+
+  var flyttState = null;
+  function renderFlytt(f) {
+    setTabsHidden(true);
+    if (!flyttState || flyttState.hid !== f.hid) {
+      flyttState = { hid: f.hid, error: '' };
+      joinWith(f.hid, f.secret, { toast: 'Knaggen er flyttet hit. Alt er med.', already: 'Knaggen er flyttet hit. Alt er med.', moment: 'C', onError: function (e) {
+        flyttState.error = errorText(e);
+        if (parseFlytt(location.hash)) renderFlytt(f);
+      } });
+    }
+    main.innerHTML = '<section class="page" data-page="flytt"><div class="moved"><h2>Flytter Knaggen hit …</h2>' +
+      (flyttState.error ? '<p class="form-error" data-testid="feil">' + esc(flyttState.error) + '</p><button type="button" class="btn primary" data-action="flytt-igjen">Prøv igjen</button>'
+        : '<p class="inv-wait" role="status">Henter rettene, uka og lista …</p>') + '</div></section>';
+  }
+
+  /* --- Den gamle adressen: flyttesiden (10) --- */
+  function oldHasData() {
+    return !!readHH() || hasOwnData() || hsState().asked || Object.keys(state.day_people || {}).length > 0;
+  }
+  function runOldAddress() {
+    var h = location.hash || '';
+    var target = NEW_HOME;
+    var q = /[?&]inn=([A-Za-z0-9\-]+)/.exec(location.search || '');
+    if (/^#(join|inn)=/.test(h)) { location.replace(target + h); return; }
+    if (q) { location.replace(target + '#inn=' + q[1]); return; }
+    if (lsGet(MOVED_KEY) === '1' || !oldHasData()) { location.replace(target); return; }
+    renderMovePage();
+  }
+  var moveState = { busy: false, error: '' };
+  function renderMovePage() {
+    setTabsHidden(true);
+    var host = NEW_HOME.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    main.innerHTML = '<section class="page" data-page="flyttet"><div class="moved"><h2>Knaggen har flyttet</h2>' +
+      '<span class="addr">' + esc(host) + '</span>' +
+      '<p>Den nye adressen er bare for Knaggen. Alt blir med:</p>' +
+      '<ul><li>Rettene, uka og lista</li><li>Faste varer og husstandens størrelse</li><li>Husstanden, hvis dere deler</li></ul>' +
+      (moveState.error ? '<p class="form-error" role="alert" data-testid="feil">' + esc(moveState.error) + '</p>' : '') +
+      '<button type="button" class="btn primary" data-action="flytt" data-testid="flytt"' + (moveState.busy ? ' disabled' : '') + '>' +
+      (moveState.busy ? 'Flytter …' : 'Flytt til ' + esc(host)) + '</button>' +
+      '<p class="hint">Hver telefon flytter selv, når det passer. Ingenting slettes her.</p>' +
+      '<p class="hint">Har du Knaggen på hjemskjermen? Legg den nye dit etterpå, og slett den gamle snarveien.</p></div></section>';
+  }
+  function doMove() {
+    if (moveState.busy) return;
+    moveState.busy = true; moveState.error = '';
+    renderMovePage();
+    var info = readHH();
+    var p;
+    if (info && info.core_done && syncMode()) {
+      // I husstand: sørg for at en avbrutt flytting av lokale data inn i husstanden er fullført før vi går.
+      if (!hh) enterHousehold(info);
+      p = syncReady.then(function () { return hh; });
+    } else {
+      p = ensureHousehold();   // bare lokale data: husstanden lages her først (createHousehold flytter alt inn)
+    }
+    p.then(function (x) {
+      lsSet(MOVED_KEY, '1');
+      location.href = NEW_HOME + '#flytt=' + x.hid + '.' + x.secret;
+    }, function (e) {
+      moveState.busy = false;
+      moveState.error = errorText(e);
+      renderMovePage();
+    });
+  }
+
+  /* --- Hjemskjerm-kortet (7, 8) --- */
+  var deferredInstall = null;
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    deferredInstall = e;
+    if (ui.installVisible && main.querySelector('[data-page="uke"]')) renderUke();
+  });
+  window.addEventListener('appinstalled', function () {
+    var s = instState(); s.done = true; s.open = false; instSave(s);
+    deferredInstall = null;
+    if (ui.installVisible) { ui.installVisible = false; if (main.querySelector('[data-page="uke"]')) renderUke(); }
+  });
+  function instState() { try { var v = JSON.parse(lsGet(INSTALL_KEY) || 'null'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; } }
+  function instSave(v) { lsSet(INSTALL_KEY, JSON.stringify(v)); }
+  function showInstallCard(dates) {
+    if (!envInfo.phone || isStandalone() || envInfo.inapp || NEW_HOME) return false;
+    var s = instState();
+    if (s.done) return false;
+    if (!weekCount(weekDates(0))) return false;
+    if (showStart() || showHsCard() || ui.swap || document.querySelector('body > .overlay')) return false;
+    // Et kort som er vist, står til det er besvart (Ikke nå / Legg til), også etter omlasting – det telles én gang.
+    if (ui.installVisible || s.open) { ui.installVisible = true; return true; }
+    if ((s.shown | 0) >= 2) return false;
+    var today = isoDate(new Date());
+    if (!s.seen) { s.seen = today; instSave(s); }
+    var momentD = s.seen < today;
+    var m = ui.installMoment;
+    var ok = (s.shown | 0) === 0 ? !!(m || momentD) : (momentD && !m && (!s.last || Date.now() - s.last >= 14 * DAY_MS));
+    if (!ok) return false;
+    s.shown = (s.shown | 0) + 1; s.last = Date.now(); s.open = true; instSave(s);
+    ui.installVisible = true; ui.installMoved = m === 'C';
+    return true;
+  }
+  function installCardHtml() {
+    var primary = deferredInstall ? '<button type="button" class="btn primary" data-action="inst-add" data-testid="inst-legg-til">Legg til</button>'
+      : '<button type="button" class="btn primary" data-action="inst-how" data-testid="inst-vis">Vis meg hvordan</button>';
+    return '<section class="inst" aria-labelledby="inst-h" data-testid="hjemskjerm-kort">' + ICON_IMG +
+      '<div><h3 id="inst-h">' + (ui.installMoved ? 'Legg den nye Knaggen på hjemskjermen' : 'Legg Knaggen på hjemskjermen') + '</h3>' +
+      '<p>' + (ui.installMoved ? 'Den gamle snarveien kan du slette etterpå.' : 'Så finner du lista igjen i butikken, uten å lete etter lenka.') + '</p></div>' +
+      '<div class="km-acts">' + primary + '<button type="button" class="btn ghost" data-action="inst-later" data-testid="inst-ikke-na">Ikke nå</button></div></section>';
+  }
+  function installLater() {
+    var s = instState(); s.last = Date.now(); s.open = false; instSave(s);
+    ui.installVisible = false; ui.installMoment = null;
+    renderUke();
+    focusEl('.week-nav [data-action="week-next"]');
+  }
+  function installAdd() {
+    var ev = deferredInstall;
+    if (!ev) { installHow(); return; }
+    deferredInstall = null;
+    try { ev.prompt(); } catch (e) { installHow(); return; }
+    Promise.resolve(ev.userChoice).then(function (c) {
+      if (c && c.outcome === 'accepted') {
+        var s = instState(); s.done = true; s.open = false; instSave(s);
+        ui.installVisible = false;
+        toast('Knaggen ligger nå på hjemskjermen');
+      } else {
+        installLater();
+        return;
+      }
+      if (main.querySelector('[data-page="uke"]')) renderUke();
+    }, function () { /* ignorer */ });
+  }
+  function installHow() {
+    if (envInfo.ios) return iosHow();
+    openV9Sheet('andr', '<div class="sheet-head"><div><h3 id="andr-h">Legg Knaggen på startskjermen</h3><span class="sub">Android</span></div>' +
+      '<button type="button" class="icon-btn" data-v9="close" aria-label="Lukk">✕</button></div>' +
+      '<ol class="steps-ios"><li><span class="n">1</span><p>Trykk på <b>⋮</b> øverst til høyre</p><span class="g">' + IC.meny + '</span></li>' +
+      '<li><span class="n">2</span><p>Velg «Legg til på startskjermen» (eller «Installer app»)</p><span class="g">' + IC.plus + '</span></li>' +
+      '<li><span class="n">3</span><p>Trykk «Installer» eller «Legg til»</p><span class="g tg"><span></span></span></li></ol>' +
+      '<div class="km-acts"><button type="button" class="btn primary" data-v9="inst-ok" data-testid="inst-skjonner">Skjønner</button></div>');
+  }
+  // iPhone: Hjem-skjerm-appen har egen lagring. Sørg for husstand først, og kopier den varige lenka i samme trykk.
+  var iosState = { copied: null, creating: false, error: '' };
+  function iosHow() {
+    iosState = { copied: null, creating: !hh, error: '' };
+    iosCopy(false);
+    openV9Sheet('ios', iosSheetHtml());
+    if (!hh) ensureHousehold().then(function () { iosState.creating = false; updateIosSheet(); }, function (e) {
+      iosState.creating = false; iosState.error = inviteErrText(e).replace('Invitasjonen lages', 'Lenka lages'); updateIosSheet();
+    });
+  }
+  function iosCopy(manual) {
+    function done(ok) { iosState.copied = ok; updateIosSheet(); }
+    try {
+      if (hh) {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(shareLink()).then(function () { done(true); }, function () { if (manual) copyQuiet(shareLink(), done); else done(false); });
+        else copyQuiet(shareLink(), done);
+      } else if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        var blob = ensureHousehold().then(function () { return new Blob([shareLink()], { type: 'text/plain' }); });
+        navigator.clipboard.write([new ClipboardItem({ 'text/plain': blob })]).then(function () { done(true); }, function () { done(false); });
+      } else {
+        ensureHousehold().then(function () { done(false); }, function () { done(false); });
+      }
+    } catch (e) { done(false); }
+  }
+  function iosSheetHtml() {
+    var s = iosState;
+    var step1 = envInfo.ipad ? 'Trykk på <b>Del</b> øverst.' : envInfo.iosOther ? 'Trykk på <b>Del</b> i adressefeltet eller i menyen.'
+      : 'Trykk på <b>Del</b>.<span class="m">Ser du den ikke? Trykk først på ⋯ eller på knappen til venstre i adressefeltet.</span>';
+    var h = '<div class="sheet-head"><div><h3 id="ios-h">Legg Knaggen på Hjem-skjerm</h3><span class="sub">' + (envInfo.ipad ? 'iPad' : 'iPhone') + ' · ' +
+      (envInfo.iosOther ? 'nettleser' : 'Safari') + '</span></div>' +
+      '<button type="button" class="icon-btn" data-v9="close" aria-label="Lukk">✕</button></div>';
+    if (s.creating) h += '<p class="inv-wait" role="status" data-testid="ios-lager">Uka og lista lagres i husstanden først, så de blir med</p>';
+    if (s.error) h += '<p class="form-error" role="alert">' + esc(s.error) + '</p>';
+    h += '<ol class="steps-ios"><li><span class="n">1</span><p>' + step1 + '</p><span class="g">' + IC.del + '</span></li>' +
+      '<li><span class="n">2</span><p>Velg <b>Legg til på Hjem-skjerm</b>.<span class="m">Rull litt ned i lista hvis du ikke ser den.</span></p><span class="g">' + IC.plus + '</span></li>' +
+      '<li><span class="n">3</span><p>La <b>Åpne som nettapp</b> stå på, og trykk <b>Legg til</b>.</p><span class="g tg"><span></span></span></li></ol>';
+    if (s.copied === true) h += '<p class="copied" data-testid="ios-kopiert">' + IC.check + '<span><b>Lenka til husstanden er kopiert.</b> Første gang du åpner Knaggen fra Hjem-skjermen, trykker du «Lim inn lenka». Da er alt med.</span></p>';
+    else if (s.copied === false && !s.creating && hh) h += '<p class="m">Første gang du åpner Knaggen fra Hjem-skjermen, trykker du «Lim inn lenka». Kopier lenka først:</p>' +
+      '<button type="button" class="btn" data-v9="ios-copy" data-testid="ios-kopier">' + IC.copy + 'Kopier lenka</button>';
+    h += '<div class="km-acts"><button type="button" class="btn primary" data-v9="inst-ok" data-testid="inst-skjonner">Skjønner</button></div>';
+    return h;
+  }
+  function updateIosSheet() {
+    var ov = document.getElementById('ios');
+    if (!ov) return;
+    var sh = ov.querySelector('.sheet'), had = sh.contains(document.activeElement) ? document.activeElement.getAttribute('data-v9') : null;
+    sh.innerHTML = iosSheetHtml();
+    var f = (had && sh.querySelector('[data-v9="' + had + '"]')) || sh.querySelector('.btn.primary');
+    if (f) try { f.focus({ preventScroll: true }); } catch (e) { f.focus(); }
+  }
+
+  /* --- Husstand: Deling (11) og Denne telefonen --- */
+  function delingHtml() {
+    var h = '';
+    if (hh) {
+      var n = ui.members, inv = validInvite();
+      var phones = ''; for (var i = 0; i < Math.min(3, Math.max(1, n || 1)); i++) phones += IC.phone;
+      h += '<ul class="hs-group"><li><span class="phones">' + phones + '</span><span class="t"><b data-testid="hs-koblet">' +
+        (n ? n + ' koblet til husstanden' : 'Delt husstand') + '</b><span>Hver telefon eller nettleser teller én</span></span></li>' +
+        '<li class="hs-code">' +
+        (inv ? '<div class="code small"><span><b data-testid="hs-kode">' + fmtCode(inv.code) + '</b><br><span class="sub">Kode til invitasjonen · gjelder til ' + dm(inv.expires_at) + '</span></span></div>'
+          : ui.inviteBusy ? '<p class="inv-wait" role="status">Lager koden …</p>' : '') +
+        (ui.inviteErr ? '<p class="form-error" role="alert" data-testid="hs-kode-feil">' + esc(ui.inviteErr) + '</p>' : '') +
+        '<div class="inv-acts"><button type="button" class="btn primary" data-action="hs-inviter" data-testid="hs-inviter">' + IC.msg + 'Inviter med melding</button>' +
+        '<div class="row"><button type="button" class="btn" data-action="copy-link" data-testid="kopier-lenke">' + IC.copy + 'Kopier lenke</button>' +
+        '<button type="button" class="btn" data-action="hs-ny-kode" data-testid="hs-ny-kode">Lag ny kode</button></div></div></li></ul>' +
+        '<details class="hs-long"' + (ui.justCreated || ui.longOpen ? ' open' : '') + '><summary>Varig lenke til husstanden</summary>' +
+        '<label class="field"><span>Delingslenke</span><input type="text" id="share-link" readonly value="' + esc(shareLink()) + '"></label>' +
+        '<button type="button" class="btn small" data-action="copy-long" data-testid="kopier-varig">Kopier varig lenke</button>' +
+        '<p class="hint">Virker også etter 7 dager. Alle som har lenka kan se og endre dataene. Del den bare med husstanden.</p></details>';
+    }
+    return h;
+  }
+  function refreshDeling() {
+    var box = document.getElementById('hs-deling');
+    if (!box) return;
+    var d = box.querySelector('details.hs-long');
+    ui.longOpen = !!(d && d.open);
+    box.innerHTML = delingHtml();
+    ui.longOpen = false;
+  }
+  function phoneRowsHtml() {
+    var h = '<ul class="hs-group">';
+    if (envInfo.phone && !isStandalone()) h += '<li><button type="button" class="hs-row" data-action="inst-open" data-testid="hs-hjemskjerm"><img class="mini" src="icons/icon-192-mork.png" alt=""><span class="t"><b>Legg Knaggen på hjemskjermen</b><span>Så finner du lista igjen</span></span><span class="go" aria-hidden="true">›</span></button></li>';
+    h += '<li><a class="hs-row" href="#koble" data-testid="hs-koble"><span class="ic">' + IC.paste + '</span><span class="t"><b>Koble til med lenke eller kode</b><span>' + (hh ? 'Bytter husstand på denne telefonen' : 'Hvis den andre allerede har en husstand') + '</span></span><span class="go" aria-hidden="true">›</span></a></li>';
+    return h + '</ul>';
+  }
+  // Kopiert eller delt fra Husstand teller også som «invitasjonen er sendt» (steg 3 ✓)
+  function markInvited() { if (lsGet(START_KEY) === 'open') lsSet(START_KEY, 'done'); }
+  function hsInvite() {
+    var inv = validInvite();
+    if (inv) { shareInvite(inv, markInvited); return; }
+    openInviteSheet();
+  }
+  function hsNewCode() {
+    ui.inviteBusy = true; ui.inviteErr = ''; refreshDeling();
+    ensureInvite(true).then(function (inv) {
+      ui.inviteBusy = false; refreshDeling();
+      toast(inv.code ? 'Ny kode: ' + fmtCode(inv.code) + '. Den gamle virker ikke lenger.' : 'Koder er ikke slått på ennå. Bruk den varige lenka.', 5000);
+    }, function (e) { ui.inviteBusy = false; ui.inviteErr = inviteErrText(e); refreshDeling(); });
+  }
+  function copyInviteLink() {
+    var inv = validInvite();
+    if (inv) { copyText(inviteLink(inv), 'Lenka er kopiert'); markInvited(); return; }
+    ui.inviteBusy = true; refreshDeling();
+    ensureInvite(false).then(function (x) {
+      ui.inviteBusy = false; refreshDeling();
+      copyText(inviteLink(x), 'Lenka er kopiert'); markInvited();
+    }, function (e) { ui.inviteBusy = false; ui.inviteErr = inviteErrText(e); refreshDeling(); });
+  }
+  // «Den andre er med i husstanden nå» – én gang hos den som inviterte (§4)
+  function membersChanged() {
+    if (!hh) return;
+    var n = ui.members || 0;
+    if (n > 1 && lsGet(START_KEY) === 'open') { lsSet(START_KEY, 'done'); if (main.querySelector('[data-page="uke"]')) renderUke(); }
+    var cur = readHH();
+    if (cur && cur.hid === hh.hid && cur.invited && !cur.othersSeen && n > (cur.inviteBase || 1)) {
+      cur.othersSeen = true; writeHH(cur); hh.othersSeen = true;
+      toast('Den andre er med i husstanden nå', 4000);
+    }
+    var el = document.querySelector('[data-testid="hs-koblet"]');
+    if (el) refreshDeling();
+  }
+
+  /* --- Trude (spec v0.9 punkt 5): samme vare med ulike navn blir én linje på lista --- */
+  // Nøkkelen bruker enkel entall (tomat/tomater) og noen faste synonymer (lettmelk → melk). Visningsnavnet er det
+  // første som kom inn (middagen først). Eldre avkrysning/+/- på det gamle navnet følger med (legacyKeys).
+  var LIST_SYNONYMS = { 'lettmelk': 'melk', 'lett melk': 'melk', 'gulrøtter': 'gulrot', 'hvitløksfedd': 'hvitløk' };
+  var LIST_NOT_PLURAL = /(sukker|pepper|krydder|pulver|filter|cider|liter|meter|vann|smør)$/;
+  function listMergeName(nn) {
+    if (LIST_SYNONYMS[nn]) return LIST_SYNONYMS[nn];
+    if (LIST_NOT_PLURAL.test(nn)) return nn;
+    // Enkle flertall og entall møtes i samme stamme: tomat/tomater → tomat, bleie/bleier → blei, eple/epler → epl.
+    if (nn.length >= 5 && /[^e]er$/.test(nn)) return nn.slice(0, -2);
+    if (nn.length >= 4 && /[^e]e$/.test(nn)) return nn.slice(0, -1);
+    return nn;
+  }
+
+  // v0.9 (Trude): kortet for ny fast vare – brikkene viser valget, redigeringen åpnes under dem
+  var FV_NEW_UNITS = ['stk', 'pk', 'l', 'kg', 'boks', 'glass', 'flaske', 'beger', 'pose', 'rull', 'kartong'];
+  function fvNewSync(card) {
+    var ga = card.getAttribute('data-aisle'), gu = card.getAttribute('data-unit'), gq = parseQty(card.getAttribute('data-qty')) || 1;
+    var ed = card.getAttribute('data-ed') || '';
+    var bAmt = card.querySelector('[data-field="amt"]'), bAisle = card.querySelector('[data-field="aisle"]');
+    if (bAmt) { bAmt.innerHTML = '<span class="k">Mengde</span>' + esc(formatQty(gq) + ' ' + unitWord(gq, gu)); bAmt.setAttribute('aria-expanded', ed === 'amt' ? 'true' : 'false'); }
+    if (bAisle) { bAisle.innerHTML = '<span class="k">Avdeling</span>' + esc(aisleLabel(ga)); bAisle.setAttribute('aria-expanded', ed === 'aisle' ? 'true' : 'false'); }
+    var box = card.querySelector('#fv-new-ed');
+    if (!box) return;
+    var h = '';
+    if (ed === 'amt') {
+      h = '<div class="fv-new-qty"><button type="button" class="step" data-action="fv-new-step" data-dir="-1" aria-label="Mindre"' + (gq <= 1 ? ' disabled' : '') + '>−</button>' +
+        '<input type="text" id="fv-new-qty" inputmode="decimal" value="' + esc(formatQty(gq)) + '" aria-label="Mengde" data-testid="faste-ny-antall">' +
+        '<button type="button" class="step" data-action="fv-new-step" data-dir="1" aria-label="Mer">+</button></div>' +
+        '<div class="fv-new-chips" role="group" aria-label="Enhet">' + FV_NEW_UNITS.map(function (u) {
+          return '<button type="button" class="chip' + (u === gu ? ' on' : '') + '" aria-pressed="' + (u === gu) + '" data-action="fv-new-unit" data-unit="' + u + '" data-testid="faste-ny-enhet-' + u + '">' + u + '</button>';
+        }).join('') + '</div>';
+    } else if (ed === 'aisle') {
+      h = '<div class="fv-new-chips" role="group" aria-label="Avdeling">' + AISLES.map(function (x) {
+        return '<button type="button" class="chip' + (x === ga ? ' on' : '') + '" aria-pressed="' + (x === ga) + '" data-action="fv-new-aisle" data-aisle="' + esc(x) + '">' + esc(aisleLabel(x)) + '</button>';
+      }).join('') + '</div>';
+    }
+    if (ed === 'amt' && document.activeElement && document.activeElement.id === 'fv-new-qty') {
+      // Ikke tegn om feltet mens det skrives i; oppdater bare enhetsbrikkene
+      var chips = box.querySelector('.fv-new-chips'); var tmp = document.createElement('div'); tmp.innerHTML = h;
+      if (chips) chips.innerHTML = tmp.querySelector('.fv-new-chips').innerHTML;
+      var minus = box.querySelector('[data-dir="-1"]'); if (minus) minus.disabled = gq <= 1;
+    } else box.innerHTML = h;
+    box.hidden = !h;
+  }
+
   /* ---------- Hendelser ---------- */
 
   main.addEventListener('click', function (e) {
@@ -3245,6 +4213,10 @@
       lsSet(WELCOME_KEY, '1');
       renderUke();
       focusEl('[data-testid="fyll"]', '.week-nav [data-action="week-next"]');
+    } else if (a === 'intro-start') {
+      introDone(readCounters('in0'));
+    } else if (a === 'intro-hopp') {
+      introDone(null);
     } else if (a === 'hs-bruk') {
       var p = readCounters('hs0');
       saveHouseholdSize({ people: p, scale: true, asked: true });
@@ -3378,21 +4350,66 @@
       ui.fvQ = ''; fvCloseOpen(); renderFastePage();
       var sq = document.getElementById('fv-q'); if (sq) sq.focus();
     } else if (a === 'fv-edit-guess') {
+      // v0.9 (Trude): mengde −/+ og enhet/avdeling som brikker med ett trykk, i stedet for en fast ring
       var card2 = main.querySelector('.fv-new'); if (!card2) return;
       var field = btn.getAttribute('data-field');
-      if (field === 'aisle') {
-        var curA = card2.getAttribute('data-aisle') || 'Tørrvare';
-        var ix = AISLES.indexOf(curA); card2.setAttribute('data-aisle', AISLES[(ix + 1) % AISLES.length]);
-      } else {
-        var curU = card2.getAttribute('data-unit') || 'stk';
-        var units = ['stk', 'pk', 'l', 'kartong', 'beger', 'flaske', 'glass', 'rull', 'pose', 'boks'];
-        var ux = units.indexOf(curU); card2.setAttribute('data-unit', units[(ux + 1) % units.length]);
-      }
-      // Oppdater brikkene uten full omtegning (behold søketekst og fokus)
-      var ga2 = card2.getAttribute('data-aisle'), gu2 = card2.getAttribute('data-unit');
-      var bAmt = card2.querySelector('[data-field="amt"]'), bAisle = card2.querySelector('[data-field="aisle"]');
-      if (bAmt) bAmt.innerHTML = '<span class="k">Mengde</span>1 ' + esc(gu2);
-      if (bAisle) bAisle.innerHTML = '<span class="k">Avdeling</span>' + esc(aisleLabel(ga2));
+      card2.setAttribute('data-ed', card2.getAttribute('data-ed') === field ? '' : field);
+      fvNewSync(card2);
+      var f1 = card2.querySelector('#fv-new-ed button.on, #fv-new-ed input');
+      if (f1) try { f1.focus({ preventScroll: true }); } catch (x) { /* ignorer */ }
+    } else if (a === 'fv-new-step' || a === 'fv-new-unit' || a === 'fv-new-aisle') {
+      var card3 = main.querySelector('.fv-new'); if (!card3) return;
+      if (a === 'fv-new-step') {
+        var q3 = (parseQty(card3.getAttribute('data-qty')) || 0) + (+btn.getAttribute('data-dir') || 0);
+        card3.setAttribute('data-qty', String(Math.max(1, round3(q3))));
+      } else if (a === 'fv-new-unit') card3.setAttribute('data-unit', btn.getAttribute('data-unit'));
+      else { card3.setAttribute('data-aisle', btn.getAttribute('data-aisle')); card3.setAttribute('data-ed', ''); }
+      var keepA = btn.getAttribute('data-unit') || btn.getAttribute('data-dir');
+      fvNewSync(card3);
+      var back3 = card3.querySelector(a === 'fv-new-aisle' ? '[data-field="aisle"]' : a === 'fv-new-unit' ? '[data-action="fv-new-unit"][data-unit="' + keepA + '"]' : '[data-action="fv-new-step"][data-dir="' + keepA + '"]');
+      if (back3) try { back3.focus({ preventScroll: true }); } catch (x) { /* ignorer */ }
+    } else if (a === 'km-close') {
+      closeStart();
+    } else if (a === 'km-invite' || a === 'hs-inviter') {
+      if (a === 'km-invite') { ui.kmError = ''; openInviteSheet(); } else hsInvite();
+    } else if (a === 'km-later') {
+      lsSet(START_KEY, 'closed');
+      renderUke();
+      focusEl(".week-tools [data-testid=\"fyll\"]:not([disabled])", ".week-nav [data-action=\"week-next\"]");
+    } else if (a === 'hs-ny-kode') {
+      hsNewCode();
+    } else if (a === 'copy-long') {
+      copyText(shareLink(), 'Lenka er kopiert');
+    } else if (a === 'inst-add') {
+      installAdd();
+    } else if (a === 'inst-how' || a === 'inst-open') {
+      if (deferredInstall) installAdd(); else installHow();
+    } else if (a === 'inst-later') {
+      installLater();
+    } else if (a === 'koble-lim') {
+      pasteConnect();
+    } else if (a === 'koble-ny') {
+      var cs = instState(); cs.connectSkip = true; instSave(cs);
+      connect.error = '';
+      history.replaceState(null, '', location.pathname + location.search + '#uke');
+      setTabsHidden(false);
+      route();
+    } else if (a === 'inapp-chrome') {
+      inappChrome();
+    } else if (a === 'inapp-copy') {
+      copyText(location.href, 'Lenka er kopiert');
+    } else if (a === 'inv-refetch') {
+      invPage = null; route();
+    } else if (a === 'flytt') {
+      doMove();
+    } else if (a === 'flytt-igjen') {
+      flyttState = null; route();
+    } else if (a === 'join-later') {
+      e.preventDefault();
+      invPage = null;
+      history.replaceState(null, '', location.pathname + location.search + '#uke');
+      setTabsHidden(false);
+      route();
     } else if (a === 'create-household') {
       startCreate();
     } else if (a === 'dismiss-share') {
@@ -3403,7 +4420,7 @@
     } else if (a === 'join') {
       startJoin(btn.getAttribute('data-hid'), btn.getAttribute('data-secret'));
     } else if (a === 'copy-link') {
-      copyText(shareLink(), 'Lenka er kopiert');
+      copyInviteLink();   // v0.9: invitasjonslenka (#inn=KODE); den varige lenka ligger under «Varig lenke»
     }
   });
 
@@ -3474,6 +4491,12 @@
   main.addEventListener('submit', function (e) {
     e.preventDefault();
     var id = e.target.id;
+    if (id === 'koble-form') {
+      var kv = parseAnyLink(document.getElementById('koble-kode').value);
+      if (kv) connectWith(kv);
+      else { connect.error = 'Finner ingen invitasjon med den koden. Sjekk tegnene.'; renderConnect(connectMode()); }
+      return;
+    }
     if (id === 'recipe-form') saveRecipeForm(e.target);
     else if (id === 'oneoff-form') saveOneoffForm(e.target);
     else if (id === 'item-add') {
@@ -3525,6 +4548,8 @@
     closeBasisDialog(false);
     closeSheet('fast-dialog', false);
     closeListMenu(false);
+    closeV9Sheet(false);
+    connect.error = '';
     ui.error = '';
     if (!/^#husstand/.test(location.hash)) ui.justCreated = false;
     route(); window.scrollTo(0, 0);
@@ -3533,7 +4558,13 @@
 
   /* ---------- Oppstart ---------- */
 
+  // v0.9: ?inn=KODE kommer bare fra «Åpne i Chrome» (intent-URL kan ikke ha #). Gjøres om til #inn= og fjernes fra adressen.
+  (function () {
+    var q = /[?&]inn=([A-Za-z0-9\-]{8,12})/.exec(location.search || '');
+    if (q && !NEW_HOME) history.replaceState(null, '', location.pathname + '#inn=' + q[1]);
+  })();
   loadLocal();
+  if (isStandalone()) { var ist = instState(); if (!ist.done) { ist.done = true; instSave(ist); } }
   var info = readHH();
   if (info && syncMode() && info.core_done) {
     enterHousehold(info);
@@ -3548,7 +4579,7 @@
   // et lite kort i Uke etter første plan (showShareCard). Firebase (SDK, anonym innlogging) startes først når man
   // oppretter/blir med i en husstand, eller hvis telefonen allerede er med i en.
   ui.weekOffset = defaultWeekOffset();
-  route();
+  if (NEW_HOME) runOldAddress(); else route();
 
   // Åpnes appen igjen etter en stund (f.eks. søndag kveld → mandag), velges riktig uke på nytt.
   var hiddenAt = 0;

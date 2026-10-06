@@ -1,4 +1,4 @@
-/* Ukeshandel v0.2 – synkronisering av husstandens data via Firebase (Firestore + anonym innlogging).
+/* Ukeshandel v0.2 (v0.9: invitasjonskoder) – synkronisering av husstandens data via Firebase (Firestore + anonym innlogging).
  * Firebase-SDK lastes først når den trengs (dynamisk import fra gstatic), så appen virker som før uten oppsett.
  */
 const SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
@@ -215,15 +215,19 @@ function subscribe(hid, oldest, handlers) {
       fromCache: vals.some(m => m.fromCache)
     });
   }
-  function listen(name, q) {
+  function listen(name, q, quiet) {
     let first = true;
     unsubs.push(fs.onSnapshot(q, { includeMetadataChanges: true }, snap => {
-      metas[name] = snap.metadata;
+      if (!quiet) metas[name] = snap.metadata;
       const changed = first || snap.docChanges().length > 0;
       first = false;
-      if (changed) handlers[name](snap.docs.map(d => Object.assign({ id: d.id }, d.data())));
-      status();
-    }, err => handlers.error && handlers.error(err, name)));
+      if (changed && handlers[name]) handlers[name](snap.docs.map(d => Object.assign({ id: d.id }, d.data())), snap.metadata);
+      if (!quiet) status();
+    }, err => {
+      // v0.9: members/invite er tillegg – feil der (f.eks. eldre regler) skal ikke påvirke resten
+      if (quiet) { if (handlers[name]) handlers[name](null, null, err); return; }
+      handlers.error && handlers.error(err, name);
+    }));
   }
   listen('recipes', fs.collection(...hh(hid, 'recipes')));
   listen('staples', fs.collection(...hh(hid, 'staples')));
@@ -232,6 +236,9 @@ function subscribe(hid, oldest, handlers) {
   listen('extras', fs.query(fs.collection(...hh(hid, 'extras')), fs.where('week', '>=', oldest)));
   listen('settings', fs.collection(...hh(hid, 'settings')));
   listen('daypeople', fs.query(fs.collection(...hh(hid, 'daypeople')), fs.where('date', '>=', oldest)));
+  // v0.9: antall tilkoblinger («2 koblet til») og aktiv invitasjonskode (uten secret)
+  listen('members', fs.collection(...hh(hid, 'members')), true);
+  listen('invite', fs.collection(...hh(hid, 'invite')), true);
   return () => unsubs.forEach(u => u());
 }
 
@@ -283,5 +290,58 @@ const W = {
   settled: () => ctx.fs.waitForPendingWrites(ctx.db)
 };
 
-window.UkeshandelSync = { mode, init, randomCode, createHousehold, joinHousehold, isMember, subscribe, write: W, uid: () => ctx && ctx.uid };
+/* ---------- v0.9: invitasjonskoder (invites/{kode}) ---------- */
+// 8 tegn uten 0/O/1/I/L (31 tegn). 248 = 31 · 8, så forkastingen gir jevn fordeling.
+const INVITE_ABC = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+function inviteCode() {
+  const out = [];
+  while (out.length < 8) {
+    const buf = crypto.getRandomValues(new Uint8Array(16));
+    for (const b of buf) { if (b < 248 && out.length < 8) out.push(INVITE_ABC[b % 31]); }
+  }
+  return out.join('');
+}
+const DAY_MS = 864e5;
+// Lager ny kode for husstanden i én batch: sletter den gamle (hvis kjent), lager invites/{ny} og peker invite/current dit.
+// Reglene sjekker at secret er husstandens. Kollisjon (koden finnes) eller klokke for langt fram gir permission-denied:
+// da prøves en ny kode, og til slutt med 6 dagers utløp (tåler at telefonens klokke går opptil et døgn for fort).
+async function createInvite(hid, secret, oldCode) {
+  const c = await init();
+  const { fs } = c;
+  let lastErr = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const code = inviteCode();
+    const exp = Date.now() + (attempt < 2 ? 7 : 6) * DAY_MS - 60000;
+    const b = fs.writeBatch(c.db);
+    if (oldCode && /^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$/.test(oldCode) && oldCode !== code) b.delete(fs.doc(c.db, 'invites', oldCode));
+    b.set(fs.doc(c.db, 'invites', code), { hid, secret, created_by: c.uid, created_at: fs.serverTimestamp(), expires_at: fs.Timestamp.fromMillis(exp) });
+    b.set(fs.doc(...hh(hid, 'invite', 'current')), { code, expires_at: fs.Timestamp.fromMillis(exp), created_by: c.uid, updated_at: fs.serverTimestamp() });
+    try {
+      await withTimeout(b.commit(), 20000, 'no-server');
+      return { code, expires_at: exp };
+    } catch (e) {
+      lastErr = e;
+      if (!(e && e.code === 'permission-denied')) throw e;
+      // Den gamle koden kan allerede være slettet (av en annen telefon): prøv uten å slette den.
+      oldCode = null;
+    }
+  }
+  throw lastErr;
+}
+// Leser en kode. Utløpt eller ukjent kode → { code: 'invite-gone' } (reglene skiller ikke på de to).
+async function getInvite(code) {
+  const c = await init();
+  try {
+    const s = await withTimeout(c.fs.getDocFromServer(c.fs.doc(c.db, 'invites', code)), 15000, 'no-server');
+    if (!s.exists()) { const e = new Error('invite-gone'); e.code = 'invite-gone'; throw e; }
+    const d = s.data();
+    return { hid: d.hid, secret: d.secret, expires_at: d.expires_at && d.expires_at.toMillis ? d.expires_at.toMillis() : null };
+  } catch (e) {
+    if (e && e.code === 'permission-denied') { const g = new Error('invite-gone'); g.code = 'invite-gone'; throw g; }
+    throw e;
+  }
+}
+
+window.UkeshandelSync = { mode, init, randomCode, createHousehold, joinHousehold, isMember, subscribe, write: W, uid: () => ctx && ctx.uid,
+  inviteCode, createInvite, getInvite };
 window.dispatchEvent(new Event('ukeshandel-sync-ready'));

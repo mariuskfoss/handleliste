@@ -9,11 +9,23 @@
   <meta name="apple-mobile-web-app-title" content="Knaggen">
   <meta name="application-name" content="Knaggen">
   <title>Knaggen</title>
+  <meta name="description" content="Husets felles huskeliste">
+  <!-- v0.9: forhåndsvisning når lenka sendes på melding (merkevare/forste-mote, og-bilde.png) -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Knaggen">
+  <meta property="og:title" content="Knaggen">
+  <meta property="og:description" content="Husets felles huskeliste">
+  <meta property="og:url" content="https://app.knaggen.no/">
+  <meta property="og:image" content="https://app.knaggen.no/og-bilde.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Knaggen – husets felles huskeliste">
+  <meta property="og:locale" content="nb_NO">
   <link rel="icon" href="icons/favicon.ico" sizes="16x16 32x32 48x48">
   <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon-mork.png">
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="style.css?v=0.8.0">
+  <link rel="stylesheet" href="style.css?v=0.9.0">
 </head>
 <body>
   <header class="topbar">
@@ -25,17 +37,17 @@
   <nav class="tabs" aria-label="Hovedmeny">
     <a href="#retter" data-tab="retter"><svg class="ico" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5.5 13.25V16.5A3.5 3.5 0 0 0 9 20H15A3.5 3.5 0 0 0 18.5 16.5V13.25"/><path d="M3.75 10.25H20.25M2.75 14.25H5.5M18.5 14.25H21.25"/><circle class="ball" fill="currentColor" cx="12" cy="6.4" r="2.1" stroke="none"/></svg>Retter</a>
     <a href="#uke" data-tab="uke"><svg class="ico" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3.75" y="5.25" width="16.5" height="15" rx="3.5"/><path d="M3.75 10.25H20.25M8.5 3.25V6.75M15.5 3.25V6.75"/><circle class="ball" fill="currentColor" cx="15.25" cy="15.25" r="2.1" stroke="none"/></svg>Uke</a>
-    <a href="#liste" data-tab="liste"><svg class="ico" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 6.5H20M10 12H20M10 17.5H16.5"/><circle class="ball" fill="currentColor" cx="5" cy="6.5" r="2.1" stroke="none"/><circle cx="5" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="5" cy="17.5" r="1.9" fill="currentColor" stroke="none"/></svg>Liste</a>
+    <a href="#liste" data-tab="liste"><svg class="ico" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 6.5H20M10 12H20M10 17.5H16.5"/><circle class="ball" fill="currentColor" cx="5" cy="6.5" r="2.1" stroke="none"/><circle cx="5" cy="12" r="1.9" fill="currentColor" stroke="none"/><circle cx="5" cy="17.5" r="1.9" fill="currentColor" stroke="none"/></svg>Handleliste</a>
   </nav>
   <!-- v0.6.3 (spec v0.6.3 punkt 1): toastbåndet – en ugjennomsiktig stripe nederst (som fanelinja) som toasten ligger i mens
        den vises. Innholdet kan ikke ligge synlig eller trykkbart under toasten; bunnpolstring lar alt rulles fram over båndet. -->
   <div id="toast-dock" class="toast-dock" aria-hidden="true"></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="firebase-config.js?v=0.8.0"></script>
-  <script src="seed.js?v=0.8.0"></script>
-  <script src="library.js?v=0.8.0"></script>
-  <script src="units.js?v=0.8.0"></script>
-  <script type="module" src="sync.js?v=0.8.0"></script>
-  <script src="scale.js?v=0.8.0"></script>
-  <script type="module" src="app.js?v=0.8.0"></script></body>
+  <script src="firebase-config.js?v=0.9.0"></script>
+  <script src="seed.js?v=0.9.0"></script>
+  <script src="library.js?v=0.9.0"></script>
+  <script src="units.js?v=0.9.0"></script>
+  <script type="module" src="sync.js?v=0.9.0"></script>
+  <script src="scale.js?v=0.9.0"></script>
+  <script type="module" src="app.js?v=0.9.0"></script></body>
 </html>

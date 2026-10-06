@@ -4,6 +4,7 @@
   "description": "Husets felles huskeliste",
   "lang": "nb",
   "dir": "ltr",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "browser",
